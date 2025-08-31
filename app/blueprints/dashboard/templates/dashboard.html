@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Exact replication of Streamlit UI -->
+<div class="main">
+  <div class="sidebar sidebar-content">
+    <!-- Controls, forms from original -->
+    <h2>⚙ Controls</h2>
+    <form id="add-vessel-form">
+      <!-- Inputs for vessel add -->
+      <button type="submit">Add</button>
+    </form>
+    <!-- Remove form -->
+  </div>
+  <div class="map-container">
+    <!-- Leaflet map div -->
+    <div id="map" style="width: 1000px; height: 800px;"></div>
+  </div>
+  <div class="alert-container">
+    <!-- Alerts -->
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+<script>
+  // Leaflet map init
+  var map = L.map('map').setView([20.5937, 78.9629], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  // SocketIO client for real-time
+  var socket = io('/dashboard');
+  socket.on('data_update', function(data) {
+    // Update map markers, alerts
+  });
+</script>
+{% endblock %}
