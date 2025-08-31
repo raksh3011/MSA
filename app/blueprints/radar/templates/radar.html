@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div id="radar-canvas" style="width: 800px; height: 800px;"></div>
+<script>
+  var canvas = document.getElementById('radar-canvas');
+  var ctx = canvas.getContext('2d');
+  // Radar sweep animation
+  function drawRadar() {
+    // Clear, draw rings, blips
+    requestAnimationFrame(drawRadar);
+  }
+  drawRadar();
+  // SocketIO for real-time blips
+  var socket = io('/radar');
+  socket.on('radar_update', function(data) {
+    // Update blips
+  });
+</script>
+{% endblock %}

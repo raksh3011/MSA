@@ -1,0 +1,15 @@
+/* Copy the original CSS from load_css() in the prompt */
+.main {background-color: #f0f8ff;}
+.sidebar .sidebar-content {background-color: #e6f0fa; margin-left: 50px; width: 300px;}
+.stButton>button {background-color: #1e90ff; color: white; border-radius: 5px;}
+.alert-box.speed {background-color: #ff4500;}
+.alert-box.piracy {background-color: #b22222;}
+.alert-box.boundary {background-color: #8b0000;}
+.alert-box {color: white; padding: 15px; border-radius: 5px; margin: 10px 0; font-weight: bold;}
+.alert-box.recent {animation: blink 1s infinite;}
+.alert-container {width: 350px; position: fixed; right: 10px; top: 100px; background-color: #fff; padding: 10px; border-radius: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-height: 600px; overflow-y: auto;}
+.map-container {width: 100%; margin-left: -300px; padding-right: 370px;}
+.modal {background-color: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);}
+@keyframes blink {
+    50% {opacity: 0.5;}
+}
