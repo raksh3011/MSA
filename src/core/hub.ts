@@ -12,6 +12,9 @@ import type {
   DataSource,
   FeedInfo,
   Geofence,
+  Incident,
+  IncidentCategory,
+  IncidentStatus,
   Policy,
   PositionReport,
   PublicUser,
@@ -20,10 +23,12 @@ import type {
   User,
   Vessel,
 } from './types';
+import { deskOf, nearestStation } from './stations';
 import { categoryFromShipType, normalizeReport, TRAIL_LENGTH } from './vessel';
 
 export const MAX_VESSELS = 6000;
 export const MAX_ALERTS = 500;
+export const MAX_INCIDENTS = 500;
 const MAX_AUDIT = 500;
 
 export interface HubState {
@@ -33,6 +38,7 @@ export interface HubState {
   geofences: Geofence[];
   audit: AuditEntry[];
   policy: Policy;
+  incidents?: Incident[];
 }
 
 export class Hub {
@@ -42,9 +48,17 @@ export class Hub {
   readonly watchlists = new Map<string, Set<string>>();
   geofences: Geofence[] = [];
   audit: AuditEntry[] = [];
+  incidents: Incident[] = [];
   policy: Policy = { ...DEFAULT_POLICY };
   source: DataSource = 'simulated';
-  feed: FeedInfo = { connected: true };
+  private feedInfo: FeedInfo = { connected: true };
+  get feed(): FeedInfo {
+    return this.feedInfo;
+  }
+  /** Replacing the feed health keeps the synthetic-traffic switch unless the new value sets it explicitly. */
+  set feed(v: FeedInfo) {
+    this.feedInfo = { ...v, synthetic: v.synthetic ?? this.feedInfo.synthetic };
+  }
   /** Called after any change to persistent state (alerts, users, watchlists, ...). */
   onPersist: (() => void) | undefined;
   /** Vessels matching this predicate are evicted last when the store is full (e.g. the area of interest). */
@@ -65,7 +79,30 @@ export class Hub {
     this.vessels.clear();
     this.alerts = [];
     this.dedupe = new Deduper();
+    this.restoreReportedContacts();
     this.persist();
+  }
+
+  /** Turn the synthetic India traffic generator on/off (the runner — Durable Object or browser — reads this flag). */
+  setSynthetic(on: boolean, actor: string): void {
+    this.feed = { ...this.feed, synthetic: on };
+    if (!on) this.removeSynthetic();
+    this.log(actor, 'feed.synthetic', on ? 'on' : 'off');
+  }
+
+  /** Drop every synthetic vessel (and its alerts) — used when the generator is switched off. */
+  removeSynthetic(): void {
+    const gone = new Set<string>();
+    for (const [mmsi, v] of this.vessels) {
+      if (v.origin === 'synthetic') {
+        gone.add(mmsi);
+        this.vessels.delete(mmsi);
+      }
+    }
+    if (gone.size > 0) {
+      this.alerts = this.alerts.filter((a) => !gone.has(a.mmsi));
+      this.persist();
+    }
   }
 
   /** Ingest one raw position report. Returns the stored vessel, or null if rejected. */
@@ -114,11 +151,12 @@ export class Hub {
       }
     }
     const victim = oldest ?? oldestAny;
+    if (victim && this.vessels.get(victim)?.origin === 'reported') return; // never evict user-reported contacts
     if (victim) this.vessels.delete(victim);
   }
 
-  private raise(v: Vessel, f: Finding, now: number): Alert | null {
-    if (!this.dedupe.allow(v.mmsi, f.ruleId, now)) return null;
+  private raise(v: Vessel, f: Finding, now: number, force = false): Alert | null {
+    if (!force && !this.dedupe.allow(v.mmsi, f.ruleId, now)) return null;
     const alert: Alert = {
       id: crypto.randomUUID(),
       ruleId: f.ruleId,
@@ -154,6 +192,79 @@ export class Hub {
     if (note) a.note = note.slice(0, 500);
     this.log(actor, `alert.${status}`, `${a.ruleId} ${a.mmsi}`);
     return a;
+  }
+
+  // ── incidents: user reports routed to the nearest Coast Guard controller ───
+  /** Re-create map contacts for open manual reports (vessel positions themselves are not persisted). */
+  private restoreReportedContacts(): void {
+    for (const i of this.incidents) {
+      if (i.manual && i.status !== 'closed' && !this.vessels.has(i.mmsi)) this.vessels.set(i.mmsi, this.contactVessel(i, i.ts));
+    }
+  }
+
+  private contactVessel(i: Pick<Incident, 'mmsi' | 'vesselName' | 'lat' | 'lon'>, now: number): Vessel {
+    return {
+      mmsi: i.mmsi, origin: 'reported', name: i.vesselName, lat: i.lat, lon: i.lon, sog: 0, cog: 0, heading: 0,
+      category: 'other', flag: 'Unknown', lastSeen: now, trail: [],
+    };
+  }
+
+  /**
+   * File a report about a vessel (existing track `mmsi`) or an unidentified boat at a position (`lat`/`lon`).
+   * Adds the vessel to the reporter's set, raises a high-priority alert and routes it to the nearest controller.
+   */
+  reportIncident(input: { reporter: string; role: Role; category: IncidentCategory; note: string; mmsi?: string; lat?: number; lon?: number }, now: number = Date.now()): Incident | { error: string } {
+    let vessel: Vessel | undefined;
+    let manual = false;
+    if (input.mmsi) {
+      vessel = this.vessels.get(input.mmsi);
+      if (!vessel) return { error: 'Vessel not found' };
+    } else if (input.lat !== undefined && input.lon !== undefined) {
+      let n = this.incidents.length + 1;
+      let mmsi = `999${String(n).padStart(6, '0')}`;
+      while (this.vessels.has(mmsi)) mmsi = `999${String(++n).padStart(6, '0')}`;
+      vessel = this.contactVessel({ mmsi, vesselName: `Unidentified contact ${String(n).padStart(3, '0')}`, lat: input.lat, lon: input.lon }, now);
+      this.vessels.set(mmsi, vessel);
+      manual = true;
+    } else {
+      return { error: 'Provide a vessel (mmsi) or a position (lat, lon)' };
+    }
+    const near = nearestStation(vessel.lat, vessel.lon);
+    const incident: Incident = {
+      id: crypto.randomUUID(), ts: now, reporter: input.reporter, reporterRole: input.role, mmsi: vessel.mmsi, vesselName: vessel.name,
+      lat: vessel.lat, lon: vessel.lon, category: input.category, note: input.note.slice(0, 500), status: 'open',
+      station: { id: near.station.id, name: near.station.name, distanceNm: near.distanceNm, desk: deskOf(near.station.id) }, manual,
+      history: [{ ts: now, actor: input.reporter, action: 'reported', note: input.note.slice(0, 500) }],
+    };
+    this.incidents.unshift(incident);
+    if (this.incidents.length > MAX_INCIDENTS) this.incidents.length = MAX_INCIDENTS;
+    // add to the reporter's own set and raise a priority alert for controllers
+    const set = this.watchlists.get(input.reporter) ?? new Set<string>();
+    set.add(vessel.mmsi);
+    this.watchlists.set(input.reporter, set);
+    this.raise(vessel, {
+      ruleId: 'user_report',
+      severity: input.category === 'distress' ? 'critical' : 'high',
+      message: `Reported by ${input.reporter} (${input.category.replace(/_/g, ' ')}): ${vessel.name} - routed to ${near.station.name} (${near.distanceNm} nm)`,
+    }, now, true);
+    this.log(input.reporter, 'incident.reported', `${vessel.mmsi} ${input.category} -> ${near.station.id}`);
+    return incident;
+  }
+
+  /** Controller actions on an incident (acknowledge, investigate, close). */
+  updateIncident(id: string, status: Exclude<IncidentStatus, 'open'>, actor: string, note?: string, now: number = Date.now()): Incident | null {
+    const i = this.incidents.find((x) => x.id === id);
+    if (!i) return null;
+    i.status = status;
+    i.history.push({ ts: now, actor, action: status, note: note?.slice(0, 500) });
+    if (status === 'closed' && i.manual) this.vessels.delete(i.mmsi);
+    this.log(actor, `incident.${status}`, `${i.mmsi} @${i.station.id}`);
+    return i;
+  }
+
+  /** Reporters see their own reports; analysts and admins see everything. */
+  incidentsFor(role: Role, username: string): Incident[] {
+    return role === 'operator' ? this.incidents.filter((i) => i.reporter === username) : this.incidents;
   }
 
   // ── watchlist (per user) ───────────────────────────────────────────────────
@@ -194,12 +305,12 @@ export class Hub {
   }
 
   // ── users ──────────────────────────────────────────────────────────────────
-  async addUser(username: string, password: string, role: Role, displayName: string): Promise<void> {
-    this.users.set(username, { username, role, displayName, passwordHash: await hashPassword(password) });
+  async addUser(username: string, password: string, role: Role, displayName: string, station?: string): Promise<void> {
+    this.users.set(username, { username, role, displayName, station, passwordHash: await hashPassword(password) });
     this.persist();
   }
   publicUser(u: User): PublicUser {
-    return { username: u.username, role: u.role, displayName: u.displayName };
+    return { username: u.username, role: u.role, displayName: u.displayName, station: u.station };
   }
 
   // ── audit ──────────────────────────────────────────────────────────────────
@@ -236,6 +347,7 @@ export class Hub {
       geofences: this.geofences,
       audit: this.audit,
       policy: this.policy,
+      incidents: this.incidents,
     };
   }
   importState(s: Partial<HubState>): void {
@@ -245,5 +357,7 @@ export class Hub {
     if (s.geofences) this.geofences = s.geofences;
     if (s.audit) this.audit = s.audit;
     if (s.policy) this.policy = { ...DEFAULT_POLICY, ...s.policy };
+    if (s.incidents) this.incidents = s.incidents;
+    this.restoreReportedContacts();
   }
 }

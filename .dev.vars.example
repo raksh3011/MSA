@@ -7,3 +7,5 @@ DATA_SOURCE=aisstream
 AISSTREAM_API_KEY=
 # Coverage: india (India + Red Sea/Gulf/Hormuz + Malacca, default) | indian-ocean | world
 AIS_REGION=india
+# Blend ~85 clearly-labelled synthetic vessels around India into the live feed (analysts can also toggle it in the UI)
+SYNTHETIC=true

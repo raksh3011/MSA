@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkBoundary, classifyZone } from '../../src/core/boundary';
+import { classifyZone, nearestBoundaryNm } from '../../src/core/boundary';
 import { BOUNDARIES, CONTIGUOUS_POLYS, EEZ_POLYS, FOREIGN_WATERS, INDIA_EEZ, TERRITORIAL_POLYS, TERRITORIAL_SEA } from '../../src/core/zones';
 import { bearingDeg, destination, distanceNm, distanceToLineNm, isValidCoord, pointInPolygon } from '../../src/core/geo';
 
@@ -34,30 +34,17 @@ describe('geo', () => {
   });
 });
 
-describe('boundary safety (modelled zones)', () => {
-  it('rejects invalid coordinates', () => {
-    expect(checkBoundary(200, 0)).toBeNull();
-  });
-  it('is safe deep in Indian waters and classifies the zone', () => {
-    const s = checkBoundary(15, 72);
-    expect(s?.level).toBe('safe');
-    expect(s?.zone).toBe('eez');
-  });
-  it('classifies territorial sea, foreign waters and open sea', () => {
+describe('zone classification (modelled zones)', () => {
+  it('classifies EEZ, territorial sea, foreign waters and open sea', () => {
+    expect(classifyZone(15, 72).zone).toBe('eez');
     expect(classifyZone(9.65, 79.18).zone).toBe('territorial');
     expect(classifyZone(22.0, 66.0)).toEqual({ zone: 'foreign', country: 'Pakistan' });
     expect(classifyZone(13, 58).zone).toBe('high_seas');
   });
-  it('reports crossed, naming the neighbouring state', () => {
-    const s = checkBoundary(22.0, 66.0);
-    expect(s?.level).toBe('crossed');
-    expect(s?.country).toBe('Pakistan');
-    expect(s?.indianSide).toBe(false);
-  });
-  it('warns when close to the boundary on the Indian side', () => {
-    const s = checkBoundary(22.0, 67.05);
-    expect(s?.indianSide).toBe(true);
-    expect(['caution', 'danger']).toContain(s?.level);
+  it('measures the distance to the nearest modelled boundary', () => {
+    expect(nearestBoundaryNm(22.0, 67.05)).toBeGreaterThan(3);
+    expect(nearestBoundaryNm(22.0, 67.05)).toBeLessThan(15);
+    expect(nearestBoundaryNm(15, 72)).toBeGreaterThan(200);
   });
 });
 

@@ -1,6 +1,9 @@
 /**
  * High-performance canvas layer drawing every vessel as a heading-oriented arrow.
- * Supports thousands of vessels, alert rings, watchlist/selection highlights, hover tooltips and hit-testing.
+ *  - smooth motion: positions glide between updates instead of jumping
+ *  - pulsing rings on vessels with open alerts, a distinct marker for user-reported contacts
+ *  - watchlist / selection highlights, hover tooltips and hit-testing
+ *  - synthetic vessels carry an amber outline so they can never be mistaken for real AIS
  */
 import L from 'leaflet';
 import type { Severity, Vessel, VesselCategory } from '../core/types';
@@ -12,15 +15,26 @@ interface Projected {
   y: number;
 }
 
+interface Glide {
+  from: [number, number];
+  to: [number, number];
+  start: number;
+}
+
 export interface VesselLayerOptions {
   onSelect: (mmsi: string) => void;
 }
+
+const GLIDE_MS = 2600;
+const FRAME_MS = 33;
+const ease = (t: number): number => 1 - (1 - t) ** 3;
 
 export class VesselLayer extends L.Layer {
   private canvas: HTMLCanvasElement | undefined;
   private tip: HTMLDivElement | undefined;
   private vessels: readonly Vessel[] = [];
   private projected: Projected[] = [];
+  private glides = new Map<string, Glide>();
   private alertSeverity: ReadonlyMap<string, Severity> = new Map();
   private watched: ReadonlySet<string> = new Set();
   private selected: string | null = null;
@@ -28,8 +42,10 @@ export class VesselLayer extends L.Layer {
   private trails: ReadonlyMap<string, ReadonlyArray<[number, number]>> = new Map();
   private showTrails = false;
   private showLabels = true;
+  private hideSynthetic = false;
+  private clock = Date.now();
   private raf = 0;
-  private now = Date.now();
+  private lastFrame = 0;
 
   constructor(private readonly opts: VesselLayerOptions) {
     super();
@@ -63,6 +79,7 @@ export class VesselLayer extends L.Layer {
     this.canvas?.remove();
     this.tip?.remove();
     cancelAnimationFrame(this.raf);
+    this.raf = 0;
     return this;
   }
 
@@ -75,9 +92,10 @@ export class VesselLayer extends L.Layer {
     trails?: ReadonlyMap<string, ReadonlyArray<[number, number]>>;
     showTrails?: boolean;
     showLabels?: boolean;
+    hideSynthetic?: boolean;
     now?: number;
   }): void {
-    if (data.vessels) this.vessels = data.vessels;
+    if (data.vessels) this.updateGlides(data.vessels);
     if (data.alertSeverity) this.alertSeverity = data.alertSeverity;
     if (data.watched) this.watched = data.watched;
     if (data.selected !== undefined) this.selected = data.selected;
@@ -85,16 +103,49 @@ export class VesselLayer extends L.Layer {
     if (data.trails) this.trails = data.trails;
     if (data.showTrails !== undefined) this.showTrails = data.showTrails;
     if (data.showLabels !== undefined) this.showLabels = data.showLabels;
-    if (data.now !== undefined) this.now = data.now;
+    if (data.hideSynthetic !== undefined) this.hideSynthetic = data.hideSynthetic;
+    if (data.now !== undefined) this.clock = data.now;
     this.schedule();
   }
 
+  /** Start a short glide from where each vessel is drawn now to its newly reported position. */
+  private updateGlides(next: readonly Vessel[]): void {
+    const t = performance.now();
+    const seen = new Set<string>();
+    for (const v of next) {
+      seen.add(v.mmsi);
+      const g = this.glides.get(v.mmsi);
+      if (!g) {
+        this.glides.set(v.mmsi, { from: [v.lat, v.lon], to: [v.lat, v.lon], start: t });
+      } else if (g.to[0] !== v.lat || g.to[1] !== v.lon) {
+        this.glides.set(v.mmsi, { from: this.displayed(g, t), to: [v.lat, v.lon], start: t });
+      }
+    }
+    for (const k of this.glides.keys()) if (!seen.has(k)) this.glides.delete(k);
+    this.vessels = next;
+  }
+
+  private displayed(g: Glide, t: number): [number, number] {
+    const f = Math.min(1, (t - g.start) / GLIDE_MS);
+    if (f >= 1) return g.to;
+    const e = ease(f);
+    return [g.from[0] + (g.to[0] - g.from[0]) * e, g.from[1] + (g.to[1] - g.from[1]) * e];
+  }
+
   private schedule(): void {
-    if (this.raf) return;
-    this.raf = requestAnimationFrame(() => {
-      this.raf = 0;
-      this.draw();
-    });
+    if (this.raf || !this._map) return;
+    const loop = (ts: number): void => {
+      if (!this._map) {
+        this.raf = 0;
+        return;
+      }
+      if (ts - this.lastFrame >= FRAME_MS) {
+        this.lastFrame = ts;
+        this.draw(ts);
+      }
+      this.raf = requestAnimationFrame(loop);
+    };
+    this.raf = requestAnimationFrame(loop);
   }
 
   private resize(): void {
@@ -110,7 +161,7 @@ export class VesselLayer extends L.Layer {
     this.canvas.style.top = '0px';
   }
 
-  private draw(): void {
+  private draw(ts: number): void {
     const map = this._map;
     const canvas = this.canvas;
     if (!map || !canvas) return;
@@ -124,7 +175,9 @@ export class VesselLayer extends L.Layer {
 
     const zoom = map.getZoom();
     const scale = zoom >= 9 ? 1.5 : zoom >= 6 ? 1.2 : zoom >= 4 ? 1 : 0.8;
+    const pulse = 0.5 + 0.5 * Math.sin(ts / 260);
     this.projected = [];
+    const now = performance.now();
 
     // trails
     if (this.showTrails || this.selected) {
@@ -148,23 +201,34 @@ export class VesselLayer extends L.Layer {
 
     const bounds = map.getBounds().pad(0.05);
     for (const v of this.vessels) {
-      if (this.hidden.has(v.category) || !bounds.contains([v.lat, v.lon])) continue;
-      const pt = map.latLngToContainerPoint([v.lat, v.lon]);
+      if (this.hidden.has(v.category) || (this.hideSynthetic && v.origin === 'synthetic')) continue;
+      const g = this.glides.get(v.mmsi);
+      const [lat, lon] = g ? this.displayed(g, now) : [v.lat, v.lon];
+      if (!bounds.contains([lat, lon])) continue;
+      const pt = map.latLngToContainerPoint([lat, lon]);
       this.projected.push({ v, x: pt.x, y: pt.y });
       const sev = this.alertSeverity.get(v.mmsi);
       const isSel = v.mmsi === this.selected;
       const isWatched = this.watched.has(v.mmsi);
-      const color = CATEGORY_COLOR[v.category];
+      const reported = v.origin === 'reported';
+      const color = reported ? '#ff2d55' : CATEGORY_COLOR[v.category];
       const r = (isSel ? 7 : 5.5) * scale;
       // Fade vessels that have not reported recently (sparse coverage): <30 min full, <6 h dimmed, older faint.
-      const age = this.now - v.lastSeen;
-      ctx.globalAlpha = isSel || sev ? 1 : age < 30 * 60_000 ? 1 : age < 6 * 3600_000 ? 0.6 : 0.35;
+      const age = this.clock - v.lastSeen;
+      ctx.globalAlpha = isSel || sev || reported ? 1 : age < 30 * 60_000 ? 1 : age < 6 * 3600_000 ? 0.6 : 0.35;
 
       if (sev) {
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, r + 5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, r + 5 + (sev === 'critical' || sev === 'high' ? pulse * 4 : 0), 0, Math.PI * 2);
         ctx.strokeStyle = SEVERITY_COLOR[sev];
         ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+      if (reported) {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r + 8 + pulse * 6, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,45,85,${0.35 + 0.4 * (1 - pulse)})`;
+        ctx.lineWidth = 2;
         ctx.stroke();
       }
       if (isWatched) {
@@ -185,9 +249,17 @@ export class VesselLayer extends L.Layer {
       }
 
       ctx.fillStyle = color;
-      ctx.strokeStyle = 'rgba(8,16,28,0.9)';
-      ctx.lineWidth = 1.2;
-      if (v.sog < 0.5) {
+      ctx.strokeStyle = v.origin === 'synthetic' ? 'rgba(245,158,11,0.95)' : 'rgba(8,16,28,0.9)';
+      ctx.lineWidth = v.origin === 'synthetic' ? 1.4 : 1.2;
+      if (reported) {
+        ctx.save();
+        ctx.translate(pt.x, pt.y);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-r * 0.9, -r * 0.9, r * 1.8, r * 1.8);
+        ctx.strokeStyle = '#ffffff';
+        ctx.strokeRect(-r * 0.9, -r * 0.9, r * 1.8, r * 1.8);
+        ctx.restore();
+      } else if (v.sog < 0.5) {
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, r * 0.8, 0, Math.PI * 2);
         ctx.fill();
@@ -208,7 +280,7 @@ export class VesselLayer extends L.Layer {
         ctx.restore();
       }
 
-      if (this.showLabels && (zoom >= 8 || isSel || (sev && zoom >= 5))) {
+      if (this.showLabels && (zoom >= 8 || isSel || reported || (sev && zoom >= 5))) {
         ctx.font = '600 11px system-ui, sans-serif';
         ctx.lineWidth = 3;
         ctx.strokeStyle = 'rgba(8,16,28,0.85)';
@@ -250,7 +322,8 @@ export class VesselLayer extends L.Layer {
     const title = document.createElement('strong');
     title.textContent = hit.v.name;
     const sub = document.createElement('span');
-    sub.textContent = `${CATEGORY_LABEL[hit.v.category]} · ${hit.v.flag} · ${hit.v.sog.toFixed(1)} kn`;
+    const origin = hit.v.origin === 'synthetic' ? ' · SYNTHETIC' : hit.v.origin === 'reported' ? ' · USER REPORT' : '';
+    sub.textContent = `${CATEGORY_LABEL[hit.v.category]} · ${hit.v.flag} · ${hit.v.sog.toFixed(1)} kn${origin}`;
     tip.append(title, document.createElement('br'), sub);
     tip.style.left = `${hit.x + 14}px`;
     tip.style.top = `${hit.y - 10}px`;

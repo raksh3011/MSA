@@ -1,4 +1,4 @@
-import type { Alert, Geofence, Severity } from '../core/types';
+import type { Alert, Geofence, Incident, Severity } from '../core/types';
 import type { Backend, FeedData, Reply, Session } from './backend';
 
 /** Everything the page modules need from the running workspace. */
@@ -17,6 +17,9 @@ export interface Ctx {
   toggleWatch(mmsi: string): Promise<void>;
   reloadGeofences(): Promise<void>;
   rerenderPage(): void;
-  toast(message: string): void;
+  toast(message: string, kind?: 'info' | 'ok' | 'warn' | 'crit', ms?: number): void;
   alertsFor(mmsi: string): Alert[];
+  incidents(): readonly Incident[];
+  refreshIncidents(): Promise<void>;
+  reportVessel(mmsi: string): void;
 }

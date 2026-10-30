@@ -45,19 +45,6 @@ describe('health and public endpoints', () => {
     expect(body.highRisk.length).toBeGreaterThan(0);
   });
 
-  it('POST /api/public/boundary-check returns a level for valid input', async () => {
-    const res = await post('/api/public/boundary-check', { lat: 15, lon: 72 });
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as { level: string }).level).toBe('safe');
-  });
-
-  it.each([[{}], [{ lat: 'x', lon: 1 }], [{ lat: 95, lon: 1 }]])('boundary-check rejects invalid body %j with 400', async (body) => {
-    expect((await post('/api/public/boundary-check', body)).status).toBe(400);
-  });
-
-  it('boundary-check rejects non-JSON bodies with 400', async () => {
-    expect((await call('/api/public/boundary-check', { method: 'POST', body: 'nope' })).status).toBe(400);
-  });
 });
 
 describe('authentication', () => {
@@ -188,5 +175,77 @@ describe('watchlist, geofences, policy, audit', () => {
     const res = await call('/api/nope');
     expect(res.status).toBe(404);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+});
+
+describe('incident reporting (route suspicious vessels to the nearest Coast Guard controller)', () => {
+  it('lists stations for authenticated users only', async () => {
+    expect((await call('/api/stations')).status).toBe(401);
+    const res = await call('/api/stations', { token: tokens.operator });
+    expect(((await res.json()) as { stations: unknown[] }).stations.length).toBeGreaterThan(10);
+  });
+
+  it('an operator reports a tracked vessel: it is routed to the nearest station, added to their set and alerted', async () => {
+    const res = await post('/api/incidents', { mmsi: '419000001', category: 'suspicious_behaviour', note: 'Circling near the rig' }, tokens.operator);
+    expect(res.status).toBe(201);
+    const inc = (await res.json()) as { id: string; station: { id: string; desk: string }; status: string; manual: boolean };
+    expect(typeof inc.station.id).toBe('string');
+    expect(typeof inc.station.desk).toBe('string');
+    expect(inc.status).toBe('open');
+    expect(inc.manual).toBe(false);
+    expect(hub.watchlistOf('operator')).toContain('419000001');
+    expect(hub.alerts.some((a) => a.ruleId === 'user_report' && a.mmsi === '419000001')).toBe(true);
+  });
+
+  it('an unidentified boat can be added from a position, becomes a map contact and is routed by location', async () => {
+    const res = await post('/api/incidents', { lat: 9.3, lon: 79.2, category: 'unidentified_vessel', note: 'Unlit boat, no AIS' }, tokens.operator);
+    expect(res.status).toBe(201);
+    const inc = (await res.json()) as { mmsi: string; manual: boolean; station: { id: string } };
+    expect(inc.manual).toBe(true);
+    expect(inc.station.id).toBe('mandapam');
+    expect(hub.vessels.get(inc.mmsi)?.origin).toBe('reported');
+  });
+
+  it('validates input', async () => {
+    expect((await post('/api/incidents', { category: 'bogus', mmsi: '419000001' }, tokens.operator)).status).toBe(400);
+    expect((await post('/api/incidents', { category: 'other' }, tokens.operator)).status).toBe(400);
+    expect((await post('/api/incidents', { category: 'other', mmsi: '12' }, tokens.operator)).status).toBe(400);
+    expect((await post('/api/incidents', { category: 'other', mmsi: '111111111' }, tokens.operator)).status).toBe(404);
+    expect((await post('/api/incidents', { category: 'other', lat: 95, lon: 10 }, tokens.operator)).status).toBe(400);
+  });
+
+  it('operators see only their own reports; analysts see all and can progress them; operators cannot', async () => {
+    const mine = (await (await call('/api/incidents', { token: tokens.operator })).json()) as { incidents: Array<{ id: string }> };
+    expect(mine.incidents.length).toBeGreaterThanOrEqual(2);
+    await post('/api/incidents', { mmsi: '636000001', category: 'distress', note: 'x' }, tokens.analyst);
+    const all = (await (await call('/api/incidents', { token: tokens.analyst })).json()) as { total: number };
+    expect(all.total).toBeGreaterThan(mine.incidents.length);
+    const id = mine.incidents[0]!.id;
+    expect((await post(`/api/incidents/${id}/status`, { status: 'acknowledged' }, tokens.operator)).status).toBe(403);
+    const ack = await post(`/api/incidents/${id}/status`, { status: 'acknowledged', note: 'unit dispatched' }, tokens.analyst);
+    expect(ack.status).toBe(200);
+    expect(await ack.json()).toMatchObject({ status: 'acknowledged' });
+    expect((await post(`/api/incidents/${id}/status`, { status: 'bogus' }, tokens.analyst)).status).toBe(400);
+    expect((await post('/api/incidents/nope/status', { status: 'closed' }, tokens.analyst)).status).toBe(404);
+  });
+
+  it('closing an incident about a manual contact removes the contact from the map', async () => {
+    const inc = (await (await post('/api/incidents', { lat: 20, lon: 70, category: 'other', note: 'x' }, tokens.operator)).json()) as { id: string; mmsi: string };
+    expect(hub.vessels.has(inc.mmsi)).toBe(true);
+    await post(`/api/incidents/${inc.id}/status`, { status: 'closed' }, tokens.analyst);
+    expect(hub.vessels.has(inc.mmsi)).toBe(false);
+  });
+
+  it('rate-limits report floods per user', async () => {
+    let last = 0;
+    for (let i = 0; i < 12; i++) last = (await post('/api/incidents', { mmsi: '419000001', category: 'other' }, tokens.admin)).status;
+    expect(last).toBe(429);
+  });
+
+  it('analysts can switch the synthetic traffic feed; operators cannot', async () => {
+    expect((await put('/api/feed/synthetic', { enabled: true }, tokens.operator)).status).toBe(403);
+    expect((await put('/api/feed/synthetic', { enabled: 'yes' }, tokens.analyst)).status).toBe(400);
+    expect((await put('/api/feed/synthetic', { enabled: true }, tokens.analyst)).status).toBe(200);
+    expect(hub.feed.synthetic).toBe(true);
   });
 });

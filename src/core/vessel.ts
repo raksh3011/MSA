@@ -73,6 +73,7 @@ export function normalizeReport(r: PositionReport, now: number = Date.now()): Ve
   const name = (r.name ?? '').replace(/[^\x20-\x7e]/g, '').trim();
   return {
     mmsi: r.mmsi,
+    origin: r.synthetic ? 'synthetic' : 'ais',
     name: name || `MMSI ${r.mmsi}`,
     lat: r.lat,
     lon: r.lon,

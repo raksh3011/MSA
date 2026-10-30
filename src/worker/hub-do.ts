@@ -11,6 +11,7 @@ import { verifyPassword, verifyToken } from '../core/auth';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
 import { Simulator } from '../core/simulator';
+import { DESKS } from '../core/stations';
 import type { DataSource, PositionReport, Role } from '../core/types';
 import { parseAisMessage } from './ais';
 import { boxesFor, inBox, INDIA_BOX, minGapMs, parseRegion } from './regions';
@@ -23,6 +24,8 @@ export interface Env {
   DATA_SOURCE?: string;
   /** aisstream coverage: 'india' (India + chokepoints, default) | 'indian-ocean' | 'world' */
   AIS_REGION?: string;
+  /** 'true' blends the synthetic India traffic generator into the live feed (analysts can also toggle it in the UI) */
+  SYNTHETIC?: string;
   /** override the upstream endpoint (testing only) */
   AISSTREAM_URL?: string;
   SEED_PASSWORD?: string;
@@ -40,6 +43,8 @@ export class OrvmsHub extends DurableObject<Env> {
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private upstream: WebSocket | undefined;
   private sim: Simulator | undefined;
+  /** real-time synthetic traffic blended into a live feed */
+  private synth: Simulator | undefined;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private readonly digitraffic = new DigitrafficClient((u, i) => fetch(u, i), { 'Digitraffic-User': 'ORVMS-student-project', 'Accept-Encoding': 'gzip' });
   private lastActivity = Date.now();
@@ -55,12 +60,13 @@ export class OrvmsHub extends DurableObject<Env> {
     });
     this.hub.source = OrvmsHub.pickSource(env);
     this.hub.focus = (v) => inBox(v.lat, v.lon, INDIA_BOX);
+    if (env.SYNTHETIC === 'true') this.hub.feed = { ...this.hub.feed, synthetic: true };
     void ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<ReturnType<Hub['exportState']>>('state');
       if (saved) this.hub.importState(saved);
       // Seed on first run, and re-seed when the SEED_PASSWORD secret has been rotated.
       const admin = this.hub.users.get('admin');
-      if (!admin || (this.env.SEED_PASSWORD && !(await verifyPassword(this.env.SEED_PASSWORD, admin.passwordHash)))) await this.seedUsers();
+      if (!admin || !this.hub.users.has('cg.mumbai') || (this.env.SEED_PASSWORD && !(await verifyPassword(this.env.SEED_PASSWORD, admin.passwordHash)))) await this.seedUsers();
       this.hub.onPersist = () => this.scheduleSave();
     });
   }
@@ -81,6 +87,8 @@ export class OrvmsHub extends DurableObject<Env> {
     await this.hub.addUser('admin', pw, 'admin', 'Administrator');
     await this.hub.addUser('analyst', pw, 'analyst', 'Maritime Analyst');
     await this.hub.addUser('operator', pw, 'operator', 'Fleet Operator');
+    // Coast Guard controllers: one analyst account per regional HQ so reports route to a named person/desk
+    for (const d of DESKS) await this.hub.addUser(`cg.${d.id}`, pw, 'analyst', `CG Controller - ${d.name}`, d.id);
   }
 
   private scheduleSave(): void {
@@ -152,6 +160,7 @@ export class OrvmsHub extends DurableObject<Env> {
     if (this.sim) {
       this.stepSim(this.sim);
     } else {
+      this.stepSynthetic();
       this.hub.sweepGaps(Date.now());
     }
     if (viewers.length > 0) {
@@ -186,6 +195,17 @@ export class OrvmsHub extends DurableObject<Env> {
       console.error('Digitraffic poll failed', err);
       this.hub.feed = { ...this.hub.feed, connected: false, error: 'Digitraffic unavailable' };
     }
+  }
+
+  /** Blend real-time synthetic India traffic into a live feed while the switch is on. */
+  private stepSynthetic(): void {
+    if (!this.hub.feed.synthetic) {
+      this.synth = undefined;
+      return;
+    }
+    const now = Date.now();
+    this.synth ??= new Simulator(7, now);
+    for (const r of this.synth.tick(now)) this.hub.ingest(r, now);
   }
 
   private stepSim(sim: Simulator): void {

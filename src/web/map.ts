@@ -10,6 +10,7 @@ import {
   HIGH_RISK_ZONES,
   TERRITORIAL_POLYS,
 } from '../core/zones';
+import { STATIONS } from '../core/stations';
 import { h } from './dom';
 import { VesselLayer } from './vesselLayer';
 
@@ -21,7 +22,7 @@ export function addBaseLayer(map: L.Map): void {
   L.tileLayer(TILES, { attribution: ATTRIBUTION, maxZoom: 12, maxNativeZoom: 10 }).addTo(map);
 }
 
-export type ZoneKey = 'territorial' | 'contiguous' | 'eez' | 'foreign' | 'boundary' | 'highRisk' | 'geofence';
+export type ZoneKey = 'territorial' | 'contiguous' | 'eez' | 'foreign' | 'boundary' | 'highRisk' | 'geofence' | 'stations';
 
 export const ZONE_LABEL: Record<ZoneKey, string> = {
   territorial: 'Territorial sea (12 nm)',
@@ -31,6 +32,7 @@ export const ZONE_LABEL: Record<ZoneKey, string> = {
   boundary: 'Maritime boundary lines (modelled)',
   highRisk: 'High-risk areas (indicative)',
   geofence: 'Geofences',
+  stations: 'Coast Guard stations',
 };
 
 export const ZONE_STYLE: Record<ZoneKey, { color: string; fill: number; dash?: string }> = {
@@ -41,6 +43,7 @@ export const ZONE_STYLE: Record<ZoneKey, { color: string; fill: number; dash?: s
   boundary: { color: '#ea580c', fill: 0 },
   highRisk: { color: '#dc2626', fill: 0.14 },
   geofence: { color: '#7c3aed', fill: 0.1 },
+  stations: { color: '#0891b2', fill: 0.9 },
 };
 
 export type ZoneGroups = Record<ZoneKey, L.LayerGroup>;
@@ -71,6 +74,11 @@ export function buildZoneGroups(): ZoneGroups {
       .bindTooltip(`${z.name} - ${z.level === 'high' ? 'high' : 'elevated'} risk (indicative)`, { sticky: true })
       .addTo(groups.highRisk);
   }
+  for (const s of STATIONS) {
+    L.circleMarker([s.lat, s.lon], { radius: s.kind === 'Regional HQ' ? 8 : 5, color: '#ffffff', weight: 2, fillColor: ZONE_STYLE.stations.color, fillOpacity: 0.95 })
+      .bindTooltip(h('div', {}, h('strong', {}, s.name), h('br'), `${s.kind} (approximate location)`), { direction: 'top' })
+      .addTo(groups.stations);
+  }
   for (const b of BOUNDARIES) {
     for (const line of b.lines) {
       L.polyline(line, { color: ZONE_STYLE.boundary.color, weight: 3, dashArray: '9 6', opacity: 0.95 })
@@ -89,6 +97,7 @@ const DEFAULT_VISIBLE: Record<ZoneKey, boolean> = {
   boundary: true,
   highRisk: true,
   geofence: true,
+  stations: true,
 };
 
 /** Fisherman / simple maps: all zone groups on. */
@@ -130,6 +139,10 @@ export class MapView {
 
   showVessels(vessels: readonly Vessel[], alertSeverity: ReadonlyMap<string, Severity>, selected: string | null, watched: ReadonlySet<string>, now: number): void {
     this.vessels.set({ vessels, alertSeverity, selected, watched, now });
+  }
+
+  setHideSynthetic(hide: boolean): void {
+    this.vessels.set({ hideSynthetic: hide });
   }
 
   setHidden(hidden: ReadonlySet<VesselCategory>): void {

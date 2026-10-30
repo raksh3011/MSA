@@ -39,6 +39,6 @@ export const RULE_LABEL: Record<string, string> = {
   high_risk_zone: 'High-risk area',
   loitering: 'Loitering',
   position_jump: 'Position jump',
-  fishing_boundary: 'Maritime boundary',
   geofence: 'Geofence',
+  user_report: 'User report',
 };

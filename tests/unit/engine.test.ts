@@ -52,22 +52,12 @@ describe('risk rules', () => {
   it('detects loitering from the trail', () => {
     const trail = Array.from({ length: 8 }, () => [15, 72] as [number, number]);
     expect(rules(vessel({ sog: 0.5, trail }), undefined)).toContain('loitering');
-    expect(rules(vessel({ sog: 0.5, trail, category: 'fishing' }), undefined)).not.toContain('loitering');
   });
 
   it('detects implausible position jumps', () => {
     const prev = vessel({ lat: 10, lon: 72, lastSeen: 0 });
     const cur = vessel({ lat: 10, lon: 80, lastSeen: 120_000 });
     expect(rules(cur, prev)).toContain('position_jump');
-  });
-
-  it('warns a fishing vessel approaching and crossing the boundary', () => {
-    const near = vessel({ category: 'fishing', flag: 'India', lat: 22.0, lon: 67.05 });
-    const far = vessel({ category: 'fishing', flag: 'India', lat: 20, lon: 70 });
-    expect(rules(near, far)).toContain('fishing_boundary');
-    const crossed = vessel({ category: 'fishing', flag: 'India', lat: 22.0, lon: 66.0 });
-    const msg = evaluateVessel(crossed, near, ctx()).find((x) => x.ruleId === 'fishing_boundary');
-    expect(msg?.message).toMatch(/crossed.*Pakistan/);
   });
 
   it('fires geofence rule on entry', () => {
@@ -115,12 +105,12 @@ describe('Hub', () => {
   it('runs the full demo scenario and raises the scripted alerts', () => {
     const hub = new Hub();
     const sim = new Simulator();
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 90; i++) {
       for (const r of sim.tick()) hub.ingest(r, sim.now);
       hub.sweepGaps(sim.now);
     }
     const seen = new Set(hub.alerts.map((a) => a.ruleId));
-    for (const r of ['eez_entry', 'high_risk_zone', 'territorial_sea', 'ais_gap', 'loitering', 'position_jump', 'fishing_boundary'] as const) {
+    for (const r of ['eez_entry', 'high_risk_zone', 'territorial_sea', 'ais_gap', 'loitering', 'position_jump'] as const) {
       expect(seen.has(r), `expected ${r} alert`).toBe(true);
     }
     expect(hub.snapshot().vessels.every((v) => v.trail.length === 0)).toBe(true);

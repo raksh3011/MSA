@@ -3,7 +3,6 @@ import { startApp } from './app';
 import { Backend, DEMO_PASSWORD, type Session } from './backend';
 import { logoMark, NAME, SHORT, TAGLINE } from './brand';
 import { $, clear, h } from './dom';
-import { mountFisher } from './fisher';
 import { applyTheme, getTheme, toggleTheme } from './theme';
 
 const root = $('#root');
@@ -73,9 +72,8 @@ function showLanding(): void {
       h(
         'div',
         { class: 'personas' },
-        card('⚓', 'Coast Guard & Maritime Security', 'Analysts · watch officers', 'A live vessel picture with rule-based risk alerts and a full audit trail.', ['EEZ, territorial-sea and boundary alerts', 'Dark-vessel and spoofing detection', 'Triage, notes, geofences'], h('button', { class: 'btn primary', onclick: () => showLogin('analyst') }, 'Sign in as analyst')),
-        card('🚢', 'Fleet Operators', 'Tankers · cargo · container lines', 'Watch your own vessels and the risks around them; hand incident reports to insurers.', ['Private watchlist, fleet-scoped alerts', 'High-risk-area and AIS-gap alerts', 'CSV incident export'], h('button', { class: 'btn primary', onclick: () => showLogin('operator') }, 'Sign in as operator')),
-        card('🎣', 'Fishermen & Small Boats', 'No login · works offline', 'Use phone GPS to see how far you are from the maritime boundary. No AIS transponder needed.', ['English · हिन्दी · ગુજરાતી', 'Distance and warning before the line', 'Large, simple screen'], h('button', { class: 'btn accent', onclick: () => { clear(root); mountFisher(root, showLanding); } }, 'Open Boundary Safety')),
+        card('⚓', 'Coast Guard & Maritime Security', 'Analysts · watch officers', 'A live vessel picture with rule-based risk alerts, incoming public reports routed to the nearest controller, and a full audit trail.', ['EEZ, territorial-sea and boundary alerts', 'Dark-vessel and spoofing detection', 'Incident desk for reports, notes, geofences'], h('button', { class: 'btn primary', onclick: () => showLogin('analyst') }, 'Sign in as analyst')),
+        card('🚢', 'Fleet Operators', 'Tankers · cargo · container lines', 'Watch your own vessels and the risks around them, report suspicious vessels, and hand incident reports to insurers.', ['Private set of vessels, fleet-scoped alerts', 'Report suspicious or unidentified boats', 'CSV incident export'], h('button', { class: 'btn primary', onclick: () => showLogin('operator') }, 'Sign in as operator')),
       ),
       h('p', { class: 'limits' }, 'Data limits: public AIS only shows vessels that transmit it. Small fishing boats and vessels that switch AIS off are often invisible, and AIS positions can be wrong or spoofed. Zones and boundaries are modelled from coastlines using UNCLOS distances and equidistance lines - they are not the official gazetted limits. ORVMS is decision support, not a navigation or legal-boundary tool.'),
       h('p', { class: 'footer' }, 'Map: Esri Ocean Basemap (GEBCO, NOAA). Coastlines: Natural Earth (public domain). Live AIS (Baltic): Fintraffic / digitraffic.fi, CC BY 4.0.'),
@@ -114,7 +112,7 @@ function showLogin(preset: 'analyst' | 'operator' | 'admin'): void {
     },
     h('div', { class: 'brand-lockup', style: 'margin-bottom:1rem' }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, 'Sign in'))),
     backend.mode === 'demo'
-      ? h('div', {}, h('p', { class: 'muted' }, `Demo mode accounts - password "${DEMO_PASSWORD}":`), h('div', { class: 'demo-accounts' }, ...(['analyst', 'operator', 'admin'] as const).map((n) => h('button', { type: 'button', class: 'btn small', onclick: () => { (user as HTMLInputElement).value = n; } }, n))))
+      ? h('div', {}, h('p', { class: 'muted' }, `Demo mode accounts - password "${DEMO_PASSWORD}":`), h('div', { class: 'demo-accounts' }, ...(['analyst', 'cg.mumbai', 'cg.gandhinagar', 'cg.kochi', 'cg.chennai', 'cg.portblair', 'operator', 'admin'] as const).map((n) => h('button', { type: 'button', class: 'btn small', onclick: () => { (user as HTMLInputElement).value = n; } }, n))))
       : null,
     h('label', { for: 'u' }, 'Username'),
     user,

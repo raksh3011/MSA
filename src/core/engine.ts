@@ -2,7 +2,6 @@
  * Risk engine. Rules are pure functions of (vessel, previous state, context) so
  * they can be unit-tested and reused unchanged in the Worker and the browser.
  */
-import { checkBoundary } from './boundary';
 import { distanceNm, pointInPolygon } from './geo';
 import type { Alert, Geofence, Policy, RuleId, Severity, Vessel } from './types';
 import { HIGH_RISK_ZONES, INDIA_EEZ, TERRITORIAL_SEA, type RiskLevel } from './zones';
@@ -12,7 +11,6 @@ export const DEFAULT_POLICY: Policy = {
   highSpeedKn: 25,
   aisGapMinutes: 30,
   loiterSogKn: 2,
-  boundaryWarnNm: 10,
 };
 
 export interface RuleContext {
@@ -39,7 +37,11 @@ function eezEntry(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Findin
   if (v.flag === 'India' || isMilitary(v)) return null;
   const ofInterest = ctx.policy.flagsOfInterest.includes(v.flag);
   const fast = v.sog >= ctx.policy.highSpeedKn;
-  let severity: Severity = 'medium';
+  // Ordinary merchant transit through an EEZ is routine; unusual vessel types and fast movers deserve more attention.
+  const routine = v.category === 'cargo' || v.category === 'tanker' || v.category === 'passenger';
+  // First sighting of an ordinary merchant that is already inside the EEZ is not an "entry" (e.g. after a restart).
+  if (!prev && routine && !ofInterest && !fast) return null;
+  let severity: Severity = routine ? 'low' : 'medium';
   if (ofInterest) severity = fast ? 'critical' : 'high';
   else if (fast) severity = 'high';
   return {
@@ -105,22 +107,6 @@ function positionJump(v: Vessel, prev: Vessel | undefined): Finding | null {
   };
 }
 
-function fishingBoundary(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Finding | null {
-  if (v.category !== 'fishing') return null;
-  const now = checkBoundary(v.lat, v.lon, ctx.policy.boundaryWarnNm);
-  if (!now || now.level === 'safe') return null;
-  const before = prev ? checkBoundary(prev.lat, prev.lon, ctx.policy.boundaryWarnNm) : null;
-  if (before && before.level === now.level) return null;
-  if (now.level === 'crossed') {
-    return { ruleId: 'fishing_boundary', severity: 'high', message: `${label(v)} crossed the maritime boundary into ${now.country ?? 'foreign'} waters (modelled)` };
-  }
-  return {
-    ruleId: 'fishing_boundary',
-    severity: now.level === 'danger' ? 'high' : 'medium',
-    message: `${label(v)} is ${now.distanceNm} nm from the maritime boundary`,
-  };
-}
-
 function geofence(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Finding | null {
   for (const g of ctx.geofences) {
     const inside = distanceNm([g.lat, g.lon], [v.lat, v.lon]) <= g.radiusNm;
@@ -133,7 +119,7 @@ function geofence(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Findin
 }
 
 type Rule = (v: Vessel, prev: Vessel | undefined, ctx: RuleContext) => Finding | null;
-export const RULES: readonly Rule[] = [eezEntry, highSpeed, highRiskZone, territorialSea, loitering, positionJump, fishingBoundary, geofence];
+export const RULES: readonly Rule[] = [eezEntry, highSpeed, highRiskZone, territorialSea, loitering, positionJump, geofence];
 
 export function evaluateVessel(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Finding[] {
   const out: Finding[] = [];
@@ -167,15 +153,15 @@ export function evaluateGaps(vessels: Iterable<Vessel>, ctx: RuleContext): Array
 
 /** Per-rule cooldowns: persistent conditions (loitering, AIS gap) re-alert rarely, events more often. */
 const COOLDOWN_MIN: Record<RuleId, number> = {
-  eez_entry: 30,
-  high_speed_in_eez: 30,
+  eez_entry: 360,
+  territorial_sea: 180,
+  high_speed_in_eez: 120,
   ais_gap: 90,
-  high_risk_zone: 60,
-  territorial_sea: 30,
+  high_risk_zone: 360,
   loitering: 120,
-  position_jump: 30,
-  fishing_boundary: 15,
-  geofence: 30,
+  position_jump: 60,
+  geofence: 60,
+  user_report: 0,
 };
 
 /** Suppresses repeat alerts for the same (vessel, rule) inside a cooldown window. */

@@ -7,7 +7,8 @@
 import { createApp } from '../api/app';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
-import { Simulator } from '../core/simulator';
+import { SIM_VESSELS, Simulator } from '../core/simulator';
+import { DESKS } from '../core/stations';
 import type { Alert, DataSource, FeedInfo, PublicUser, Snapshot } from '../core/types';
 
 export type Mode = 'live' | 'demo';
@@ -42,6 +43,8 @@ interface DemoState {
   source: DataSource;
   dt: DigitrafficClient;
   lastLivePoll: number;
+  /** real-time synthetic India traffic blended into a live feed */
+  synth?: Simulator;
   error?: string;
 }
 
@@ -79,7 +82,9 @@ export class Backend {
     await hub.addUser('analyst', DEMO_PASSWORD, 'analyst', 'Demo Analyst (Coast Guard)');
     await hub.addUser('operator', DEMO_PASSWORD, 'operator', 'Demo Fleet Operator');
     await hub.addUser('admin', DEMO_PASSWORD, 'admin', 'Demo Administrator');
-    for (const mmsi of ['636092001', '419000011', '470000555', '477000310']) hub.watch('operator', mmsi);
+    for (const d of DESKS) await hub.addUser(`cg.${d.id}`, DEMO_PASSWORD, 'analyst', `CG Controller - ${d.name}`, d.id);
+    // the demo operator starts with the first few synthetic cargo/tanker vessels in their set
+    for (const v of SIM_VESSELS.filter((x) => x.shipType !== undefined && x.shipType >= 70 && x.behavior === 'lane').slice(0, 5)) hub.watch('operator', v.mmsi);
     const secret = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
     // The API clock follows the data: simulated time for the simulator, wall-clock for real AIS.
     const app = createApp({ hub, jwtSecret: secret, now: () => (demo.source === 'simulated' ? demo.sim.now : Date.now()) });
@@ -89,6 +94,17 @@ export class Backend {
 
   private static warmSim(d: DemoState): void {
     for (let i = 0; i < 45; i++) Backend.stepSim(d); // warm start so the first screen has history
+  }
+
+  /** Blend (or remove) real-time synthetic India traffic according to the hub's synthetic switch. */
+  private static stepSynthetic(d: DemoState): void {
+    if (!d.hub.feed.synthetic) {
+      d.synth = undefined;
+      return;
+    }
+    const now = Date.now();
+    d.synth ??= new Simulator(7, now);
+    for (const r of d.synth.tick(now)) d.hub.ingest(r, now);
   }
 
   private static stepSim(d: DemoState): void {
@@ -167,7 +183,10 @@ export class Backend {
       const d = this.demo;
       const timer = setInterval(() => {
         if (d.source === 'simulated') Backend.stepSim(d);
-        else if (Date.now() - d.lastLivePoll >= LIVE_POLL_MS) void this.pollLive(d);
+        else {
+          Backend.stepSynthetic(d);
+          if (Date.now() - d.lastLivePoll >= LIVE_POLL_MS) void this.pollLive(d);
+        }
         void poll();
       }, 3000);
       return () => clearInterval(timer);

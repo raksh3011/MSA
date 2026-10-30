@@ -22,6 +22,6 @@ if (existsSync('.dev.vars') && !force) {
 const password = randomBytes(9).toString('base64url');
 writeFileSync(
   '.dev.vars',
-  [`JWT_SECRET=${randomBytes(32).toString('hex')}`, `SEED_PASSWORD=${password}`, 'DATA_SOURCE=aisstream', `AISSTREAM_API_KEY=${key}`, `AIS_REGION=${region}`, ''].join('\n'),
+  [`JWT_SECRET=${randomBytes(32).toString('hex')}`, `SEED_PASSWORD=${password}`, 'DATA_SOURCE=aisstream', 'SYNTHETIC=true', `AISSTREAM_API_KEY=${key}`, `AIS_REGION=${region}`, ''].join('\n'),
 );
 console.log(`Wrote .dev.vars (region: ${region}).\nSign-in users: admin / analyst / operator   password: ${password}\nNow run: npm run live   then open http://localhost:8787`);

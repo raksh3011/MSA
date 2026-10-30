@@ -10,8 +10,12 @@ export type VesselCategory =
   | 'highspeed'
   | 'other';
 
+/** Where a vessel record came from: real AIS, the synthetic traffic generator, or a user-reported contact. */
+export type VesselOrigin = 'ais' | 'synthetic' | 'reported';
+
 export interface Vessel {
   mmsi: string;
+  origin?: VesselOrigin;
   name: string;
   lat: number;
   lon: number;
@@ -39,6 +43,8 @@ export interface PositionReport {
   shipType?: number;
   /** epoch ms */
   ts?: number;
+  /** true for reports produced by the synthetic traffic generator */
+  synthetic?: boolean;
 }
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
@@ -52,8 +58,8 @@ export type RuleId =
   | 'territorial_sea'
   | 'loitering'
   | 'position_jump'
-  | 'fishing_boundary'
-  | 'geofence';
+  | 'geofence'
+  | 'user_report';
 
 export interface Alert {
   id: string;
@@ -77,6 +83,8 @@ export interface User {
   username: string;
   role: Role;
   displayName: string;
+  /** Coast Guard station/controller this user works for (analysts only) */
+  station?: string;
   /** PBKDF2 record: `iterations$saltB64$hashB64` */
   passwordHash: string;
 }
@@ -85,6 +93,45 @@ export interface PublicUser {
   username: string;
   role: Role;
   displayName: string;
+  station?: string;
+}
+
+export type IncidentCategory = 'suspicious_behaviour' | 'unidentified_vessel' | 'ais_spoofing' | 'illegal_activity' | 'distress' | 'other';
+export type IncidentStatus = 'open' | 'acknowledged' | 'investigating' | 'closed';
+
+export interface Station {
+  id: string;
+  name: string;
+  kind: 'Regional HQ' | 'District HQ' | 'Station';
+  lat: number;
+  lon: number;
+}
+
+export interface IncidentEvent {
+  ts: number;
+  actor: string;
+  action: string;
+  note?: string;
+}
+
+/** A user report about a suspicious / unidentified vessel, routed to the nearest Coast Guard controller. */
+export interface Incident {
+  id: string;
+  ts: number;
+  reporter: string;
+  reporterRole: Role;
+  mmsi: string;
+  vesselName: string;
+  lat: number;
+  lon: number;
+  category: IncidentCategory;
+  note: string;
+  status: IncidentStatus;
+  /** nearest Coast Guard station at the time of the report */
+  station: { id: string; name: string; distanceNm: number; desk: string };
+  /** true when the contact was not on AIS and was added manually from a visual sighting */
+  manual: boolean;
+  history: IncidentEvent[];
 }
 
 export interface Geofence {
@@ -109,8 +156,6 @@ export interface Policy {
   highSpeedKn: number;
   aisGapMinutes: number;
   loiterSogKn: number;
-  /** distance to the fishing boundary at which a warning is raised */
-  boundaryWarnNm: number;
 }
 
 /** Where vessel positions come from. */
@@ -125,6 +170,8 @@ export interface FeedInfo {
   /** coverage preset, e.g. india | indian-ocean | world */
   region?: string;
   messages?: number;
+  /** synthetic India traffic is being blended into the feed */
+  synthetic?: boolean;
 }
 
 export interface Snapshot {

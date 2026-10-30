@@ -5,9 +5,8 @@ Serverless, TypeScript end to end, and **free to host** (no always-on backend se
 
 | Persona | What they get |
 |---|---|
-| **Coast Guard / maritime security analysts** | Live vessel picture, rule-based risk alerts (EEZ / territorial-sea entry, boundary crossing, dark vessels, spoofing, loitering, high-risk areas), alert triage with notes, geofences, audit trail |
-| **Fleet operators** (tankers, cargo, container) | Private watchlist ("My fleet"), alerts scoped to their own vessels, CSV incident export for insurers/charterers |
-| **Fishermen & small boats** | Public, login-free **Boundary Safety** screen: phone GPS → distance to the maritime boundary and which waters you are in. Offline-first, English / हिन्दी / ગુજરાતી |
+| **Coast Guard controllers / maritime security analysts** | Live vessel picture, rule-based risk alerts (EEZ / territorial-sea entry, dark vessels, spoofing, loitering, high-risk areas), an **incident desk** for reports routed to their station, alert triage with notes, geofences, audit trail |
+| **Fleet operators** (tankers, cargo, container) and other **reporters** | A private set of vessels ("My fleet"), alerts scoped to it, **report a suspicious or unidentified vessel** to the nearest Coast Guard controller, CSV incident export for insurers/charterers |
 
 > **Data limits.** Public AIS only shows vessels that transmit it. Small fishing boats and vessels that switch AIS off are often invisible and AIS positions can be wrong or spoofed. Zones and boundaries are **modelled** (see below), not the official gazetted limits. ORVMS is decision support, not a navigation or legal-boundary tool.
 
@@ -17,7 +16,7 @@ Serverless, TypeScript end to end, and **free to host** (no always-on backend se
 |---|---|---|---|
 | **aisstream.io** | **Global AIS**, including every vessel near India's EEZ | Free API key (https://aisstream.io → sign in with GitHub → API Keys) | Server only (Worker / `npm run live`) — aisstream does not allow browser connections |
 | **Digitraffic Marine** (Fintraffic, CC BY 4.0) | Real live AIS, Baltic Sea (~650 vessels) | Nothing | Browser demo (data-source menu) **and** Worker |
-| Built-in simulator | Indian Ocean scenarios (dark vessel, spoofing, boundary crossings…) | Nothing | Browser demo and Worker |
+| Synthetic India traffic | ~85 distinct vessels on real shipping lanes around India (flagged **synthetic**) + scripted scenarios (dark vessel, spoofing, loitering, unidentified fast craft) | Nothing | Browser demo (time-lapse), and blendable into a live feed (real-time pace) |
 
 No free feed covers Indian waters without a key, so global/Indian live data needs the free aisstream key. Fastest way to see it (about 2 minutes, no Cloudflare account):
 
@@ -74,7 +73,7 @@ npm test             # unit + API tests
 npm run lint && npm run typecheck && npm run build
 ```
 
-Demo-mode accounts (browser-only; password `demo1234`): `analyst`, `operator`, `admin`. Keyboard: `/` focuses vessel search, `Esc` clears selection.
+Demo-mode accounts (browser-only; password `demo1234`): `analyst`, `operator`, `admin`, and controllers `cg.mumbai`, `cg.gandhinagar`, `cg.kochi`, `cg.chennai`, `cg.portblair`. Keyboard: `/` focuses vessel search, `Esc` clears selection.
 
 ### Run the real Worker locally
 
@@ -82,7 +81,7 @@ Demo-mode accounts (browser-only; password `demo1234`): `analyst`, `operator`, `
 cp .dev.vars.example .dev.vars     # set JWT_SECRET and SEED_PASSWORD (and optionally DATA_SOURCE / AISSTREAM_API_KEY)
 npx wrangler dev                   # http://localhost:8787  (REST + WebSocket)
 ```
-Seeded users `admin` / `analyst` / `operator` use the `SEED_PASSWORD` you set.
+Seeded users `admin` / `analyst` / `operator` / `cg.*` use the `SEED_PASSWORD` you set.
 
 ## Deploy for free
 
@@ -109,21 +108,43 @@ Serves the UI and API from one `*.workers.dev` URL. Rotate any API key that was 
 |---|---|---|
 | `GET /api/health` | – | Liveness + feed source |
 | `GET /api/public/zones` | – | Modelled boundary lines, neighbouring waters, high-risk areas, method + disclaimer |
-| `POST /api/public/boundary-check` | – (rate-limited) | `{lat, lon}` → level, distance, zone, neighbouring state |
 | `POST /api/auth/login` | – (rate-limited) | JWT (HS256, 8 h) |
 | `GET /api/me`, `GET /api/vessels`, `GET /api/vessels/:mmsi` | any role | Identity and vessel state |
 | `GET /api/alerts?status=&severity=` | any role (operators see only their fleet) | Alert queue |
 | `POST /api/alerts/:id/ack` · `/resolve` | any role (same scoping) | Alert lifecycle with notes |
 | `GET /api/reports/alerts.csv` | any role | CSV export (formula-injection safe) |
-| `GET/POST/DELETE /api/watchlist` | any role | Per-user watchlist |
+| `GET/POST/DELETE /api/watchlist` | any role | Per-user set of vessels |
+| `GET /api/stations` | any role | Coast Guard stations (approximate) |
+| `POST /api/incidents` | any role (rate-limited) | Report a vessel (`mmsi`) or an unidentified boat (`lat`,`lon`) → routed to the nearest station |
+| `GET /api/incidents` | any role (reporters see their own) | Incident list |
+| `POST /api/incidents/:id/status` | analyst, admin | acknowledged / investigating / closed |
+| `PUT /api/feed/synthetic` | analyst, admin | Blend synthetic India traffic into the feed |
 | `GET /api/geofences` · `POST/DELETE` | read: any · write: analyst, admin | Circular geofences |
 | `GET/PUT /api/policy` | read: any · write: admin | Risk thresholds, flags of interest |
 | `GET /api/audit` | admin | Audit trail |
 | `WS /ws?token=` | any role | Snapshot stream (alerts filtered per user) |
 
+## Synthetic traffic near India
+
+`src/core/simulator.ts` generates ~85 distinct vessels (cargo, tankers, passenger ferries, Indian Coast Guard / Navy patrols, foreign flags) sailing 13 real shipping lanes (Gulf of Aden – Colombo – Malacca, Mumbai – Kochi, Chennai – Port Blair, …) plus scripted scenarios. Lanes are verified against Natural Earth land (`scripts/check_routes.py`). The vessels go through **exactly the same pipeline as live AIS** — `Hub.ingest` → risk engine → alerts — with AIS-style irregular reports and jitter, and every record carries `origin: 'synthetic'`: amber outline on the map, a SYNTHETIC tag in the detail panel and tooltip, and a layer toggle. Never present them as real vessels.
+
+* Demo mode "Simulated" source: time-lapse (about 40× real time) so scenarios play out in minutes.
+* Blend into a live feed: tick **Layers → Blend synthetic India traffic** (analysts/admins), or set `SYNTHETIC=true`. This runs at real-time pace, like live data.
+
+## Reporting suspicious vessels
+
+From any vessel's detail panel (**⚑ Report suspicious vessel**), or the map's **⚑ Report unidentified boat** (click where you saw a boat that is not on AIS), choose a category and add details. ORVMS then:
+
+1. finds the **nearest Coast Guard station** (`src/core/stations.ts`, ~23 regional/district HQs and stations, approximate locations) and its **controller desk**;
+2. adds the vessel to the reporter's own set, and for an unidentified boat adds a **user-reported contact** to the map (red diamond);
+3. raises a high-priority `user_report` alert (critical for distress) and an **incident** with a timeline;
+4. notifies the controllers of that desk (toast + badge on the Incidents tab). Controllers acknowledge → investigate → close; reporters see the status change. Closing a manual contact removes it from the map.
+
+Demo/seeded controller accounts: `cg.mumbai`, `cg.gandhinagar`, `cg.kochi`, `cg.chennai`, `cg.portblair`. Station coordinates are approximate and this is **not a distress system** — use official channels in an emergency.
+
 ## Risk rules
 
-`eez_entry` · `territorial_sea` · `high_speed_in_eez` · `high_risk_zone` · `loitering` · `ais_gap` (dark vessel; only for vessels that were underway) · `position_jump` (spoofing/bad data) · `fishing_boundary` (names the neighbouring state) · `geofence`.
+`eez_entry` · `territorial_sea` · `high_speed_in_eez` · `high_risk_zone` · `loitering` · `ais_gap` (dark vessel; only for vessels that were underway) · `position_jump` (spoofing/bad data) · `geofence` · `user_report`.
 Severity and thresholds come from an admin-editable **policy** (no hard-coded "unfriendly flags"). Alerts are de-duplicated with per-rule cooldowns.
 
 ## Security
@@ -137,7 +158,7 @@ src/
   core/    domain logic: geo, zones (+ zones.data.json), boundary, vessel normalisation, risk engine, Hub, auth, simulator, Digitraffic client
   api/     Hono REST app, rate limiter, CSV export
   worker/  Cloudflare Worker + Durable Object + aisstream parser
-  web/     UI: landing, workspace (map, alerts, detail), pages, fisherman view, i18n, theme, canvas vessel layer
+  web/     UI: landing, workspace (map, alerts, detail), pages, incident reporting dialog, theme, animated canvas vessel layer
 scripts/   build_zones.py (zone geometry), check_routes.py, probe.ts (dev helpers)
 tests/
   unit/    geo + zones, vessel, engine, hub, auth, helpers
@@ -148,4 +169,4 @@ wrangler.toml        Worker + Durable Object + static assets
 
 ## What changed from the prototype
 
-Fake login → real auth + RBAC · committed API key / `.pyc` files → secrets + `.gitignore` · open `DELETE`/`POST /vessels/manual` → removed · in-memory global state → Hub with persistence · hard-coded flag politics → admin policy · hand-drawn rectangle "EEZ" → coastline-derived 12/24/200 nm zones with equidistance boundaries · misclassified ship types → fixed + tested · 1,168-line `app.js` → typed modules · no tests → 67 tests · Python server on Render → serverless · simulated-only data → real live AIS option.
+Fake login → real auth + RBAC · committed API key / `.pyc` files → secrets + `.gitignore` · open `DELETE`/`POST /vessels/manual` → removed · in-memory global state → Hub with persistence · hard-coded flag politics → admin policy · hand-drawn rectangle "EEZ" → coastline-derived 12/24/200 nm zones with equidistance boundaries · misclassified ship types → fixed + tested · 1,168-line `app.js` → typed modules · no tests → 72 tests · Python server on Render → serverless · simulated-only data → real live AIS option.

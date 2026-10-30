@@ -1,6 +1,7 @@
-import type { Alert, Policy, Vessel } from '../core/types';
+import type { Alert, Incident, IncidentStatus, Policy, Vessel } from '../core/types';
 import type { Ctx } from './ctx';
 import { clear, fmtDateTime, h } from './dom';
+import { CATEGORY_TEXT } from './report';
 import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_LABEL, SEVERITY_COLOR } from './style-tokens';
 
 function vesselTable(ctx: Ctx, list: Vessel[], empty: string): HTMLElement {
@@ -181,7 +182,6 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
   const f1 = field('highSpeedKn', 'High-speed threshold (kn)');
   const f2 = field('aisGapMinutes', 'AIS gap (minutes)');
   const f3 = field('loiterSogKn', 'Loitering speed (kn)');
-  const f4 = field('boundaryWarnNm', 'Boundary warning distance (nm)');
   const flags = h('input', { id: 'p-flags', value: p.flagsOfInterest.join(', '), placeholder: 'e.g. Somalia, Yemen' });
   const msg = h('p', { class: 'muted', role: 'status' });
   return h(
@@ -198,7 +198,6 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
             highSpeedKn: parseFloat(f1[1].value),
             aisGapMinutes: parseFloat(f2[1].value),
             loiterSogKn: parseFloat(f3[1].value),
-            boundaryWarnNm: parseFloat(f4[1].value),
             flagsOfInterest: (flags as HTMLInputElement).value.split(',').map((s) => s.trim()).filter(Boolean),
           });
           msg.textContent = r.status === 200 ? 'Policy saved.' : (r.data.error ?? 'Failed');
@@ -206,7 +205,7 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
       },
       h('h3', {}, 'Risk policy'),
       h('p', { class: 'muted' }, 'Flags of interest raise EEZ-entry severity. This is a configurable policy decision, not hard-coded.'),
-      ...f1, ...f2, ...f3, ...f4,
+      ...f1, ...f2, ...f3,
       h('label', { for: 'p-flags' }, 'Flags of interest (comma-separated)'),
       flags,
       h('div', { class: 'row' }, h('span', {}), h('button', { class: 'btn primary', type: 'submit' }, 'Save policy')),
@@ -223,5 +222,76 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
         h('tbody', {}, ...aud.data.audit.slice(0, 60).map((a) => h('tr', {}, h('td', {}, fmtDateTime(a.ts)), h('td', {}, a.actor), h('td', {}, a.action), h('td', {}, a.detail)))),
       ),
     ),
+  );
+}
+
+const INCIDENT_FLOW: Array<{ status: Exclude<IncidentStatus, 'open'>; label: string }> = [
+  { status: 'acknowledged', label: 'Acknowledge' },
+  { status: 'investigating', label: 'Investigating' },
+  { status: 'closed', label: 'Close' },
+];
+
+export function incidentsPage(ctx: Ctx, myStation: string | undefined): HTMLElement {
+  const all = ctx.incidents() as Incident[];
+  let onlyMine = false;
+  const body = h('div', {});
+  const render = (): void => {
+    clear(body);
+    const list = onlyMine && myStation ? all.filter((i) => (i.station.desk ?? i.station.id) === myStation) : all;
+    if (list.length === 0) {
+      body.append(h('p', { class: 'empty' }, ctx.isOperator ? 'You have not reported anything yet. Select a vessel on the map and press "Report suspicious", or use "Report unidentified boat".' : 'No incidents.'));
+      return;
+    }
+    for (const i of list) {
+      body.append(
+        h(
+          'article',
+          { class: `incident st-${i.status}` },
+          h(
+            'div',
+            { class: 'inc-head' },
+            h('span', { class: `badge st-${i.status}` }, i.status),
+            h('button', { class: 'link', onclick: () => ctx.openOnMap(i.mmsi) }, i.vesselName),
+            h('span', { class: 'muted' }, `${fmtDateTime(i.ts)} · by ${i.reporter}`),
+          ),
+          h('div', { class: 'inc-route' }, '⚑ ', h('strong', {}, i.station.name), h('span', { class: 'muted' }, ` · ${i.station.distanceNm} nm from contact · desk: ${i.station.desk ?? i.station.id}`)),
+          h('p', { class: 'inc-note' }, h('strong', {}, `${CATEGORY_TEXT[i.category]}. `), i.note || ''),
+          h('ul', { class: 'timeline' }, ...i.history.map((e) => h('li', {}, h('span', { class: 'muted' }, `${fmtDateTime(e.ts)} `), `${e.actor}: ${e.action}${e.note ? ` - ${e.note}` : ''}`))),
+          ctx.isOperator || i.status === 'closed'
+            ? null
+            : h(
+                'div',
+                { class: 'inc-actions' },
+                ...INCIDENT_FLOW.filter((f) => f.status !== i.status).map((f) =>
+                  h('button', {
+                    class: 'btn small',
+                    onclick: async () => {
+                      const note = f.status === 'closed' ? (prompt('Closing note (optional):') ?? undefined) : undefined;
+                      await ctx.api('POST', `/api/incidents/${i.id}/status`, { status: f.status, ...(note ? { note } : {}) });
+                      await ctx.refreshIncidents();
+                      ctx.toast(`Incident ${f.status}`);
+                      ctx.rerenderPage();
+                    },
+                  }, f.label),
+                ),
+              ),
+        ),
+      );
+    }
+  };
+  render();
+  return h(
+    'div',
+    { class: 'page-inner' },
+    h(
+      'div',
+      { class: 'page-head' },
+      h('h2', {}, ctx.isOperator ? 'My reports' : 'Incident reports'),
+      myStation && !ctx.isOperator
+        ? h('label', { class: 'chk', style: 'margin:0' }, h('input', { type: 'checkbox', onchange: (e: Event) => { onlyMine = (e.target as HTMLInputElement).checked; render(); } }), 'only my station')
+        : null,
+    ),
+    h('p', { class: 'muted' }, ctx.isOperator ? 'Reports you filed and the controller response.' : 'Reports from users, routed to the nearest Coast Guard controller. Acknowledge, investigate and close them here.'),
+    body,
   );
 }
