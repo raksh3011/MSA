@@ -272,14 +272,14 @@ export function createApp(deps: AppDeps): Hono<Env> {
     const body = await readJson(c);
     if (!body) return c.json({ error: 'JSON body required' }, 400);
     const next: Partial<Policy> = {};
-    const num = (key: 'highSpeedKn' | 'aisGapMinutes' | 'loiterSogKn', lo: number, hi: number): boolean => {
+    const num = (key: 'highSpeedKn' | 'aisGapMinutes' | 'loiterSogKn' | 'approachNm', lo: number, hi: number): boolean => {
       const val = body[key];
       if (val === undefined) return true;
       if (typeof val !== 'number' || !Number.isFinite(val) || val < lo || val > hi) return false;
       next[key] = val;
       return true;
     };
-    if (!num('highSpeedKn', 5, 60) || !num('aisGapMinutes', 5, 720) || !num('loiterSogKn', 0, 10)) {
+    if (!num('highSpeedKn', 5, 60) || !num('aisGapMinutes', 5, 720) || !num('loiterSogKn', 0, 10) || !num('approachNm', 10, 200)) {
       return c.json({ error: 'Policy value out of range' }, 400);
     }
     if (body.flagsOfInterest !== undefined) {

@@ -50,8 +50,15 @@ export interface PositionReport {
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 
+/** Identity of a vessel from India's point of view. */
+export type VesselClass = 'indian' | 'foreign' | 'unknown';
+
 export type RuleId =
+  | 'eez_approach'
   | 'eez_entry'
+  | 'contiguous_entry'
+  | 'indian_critical_zone'
+  | 'indian_foreign_waters'
   | 'high_speed_in_eez'
   | 'ais_gap'
   | 'high_risk_zone'
@@ -67,6 +74,8 @@ export interface Alert {
   severity: Severity;
   mmsi: string;
   vesselName: string;
+  /** Indian / foreign / unknown vessel */
+  vesselClass?: VesselClass;
   message: string;
   lat: number;
   lon: number;
@@ -85,6 +94,8 @@ export interface User {
   displayName: string;
   /** Coast Guard station/controller this user works for (analysts only) */
   station?: string;
+  /** company whose fleet this operator manages */
+  fleetName?: string;
   /** PBKDF2 record: `iterations$saltB64$hashB64` */
   passwordHash: string;
 }
@@ -94,6 +105,7 @@ export interface PublicUser {
   role: Role;
   displayName: string;
   station?: string;
+  fleetName?: string;
 }
 
 export type IncidentCategory = 'suspicious_behaviour' | 'unidentified_vessel' | 'ais_spoofing' | 'illegal_activity' | 'distress' | 'other';
@@ -156,6 +168,8 @@ export interface Policy {
   highSpeedKn: number;
   aisGapMinutes: number;
   loiterSogKn: number;
+  /** distance from the EEZ limit at which a closing foreign/unknown vessel raises an "approaching" alert */
+  approachNm: number;
 }
 
 /** Where vessel positions come from. */

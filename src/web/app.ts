@@ -1,7 +1,7 @@
 /** The authenticated workspace: header, KPI + alert queue, map with overlays, vessel detail, pages. */
 import { classifyZone, nearestBoundaryNm } from '../core/boundary';
 import { highRiskZoneOf } from '../core/engine';
-import type { Alert, DataSource, Geofence, Incident, Severity, VesselCategory } from '../core/types';
+import type { Alert, DataSource, Geofence, Incident, Severity, VesselCategory, VesselClass } from '../core/types';
 import { Backend, type FeedData, type FeedStatus, type Session } from './backend';
 import { logoMark, SHORT, NAME } from './brand';
 import type { Ctx } from './ctx';
@@ -9,7 +9,7 @@ import { clear, fmtDateTime, fmtTime, h } from './dom';
 import { MapView, ZONE_LABEL, ZONE_STYLE, type ZoneKey } from './map';
 import { adminPage, analyticsPage, fleetPage, incidentsPage, zonesPage } from './pages';
 import { openReportDialog } from './report';
-import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_LABEL, SEVERITY_RANK } from './style-tokens';
+import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_GROUP, RULE_LABEL, SEVERITY_RANK } from './style-tokens';
 import { getTheme, toggleTheme } from './theme';
 
 type Tab = 'map' | 'fleet' | 'incidents' | 'analytics' | 'zones' | 'admin';
@@ -86,6 +86,8 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   let watch = new Set<string>();
   let geofences: Geofence[] = [];
   let sevFilter: Severity | 'all' = 'all';
+  let classFilter: 'all' | VesselClass = 'all';
+  let groupFilter: 'all' | 'boundary' | 'zones' | 'integrity' = 'all';
   let showClosed = false;
   const hidden = new Set<VesselCategory>();
   let lastSource: DataSource | null = null;
@@ -209,7 +211,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
         'div',
         { class: 'user-chip' },
         h('span', { class: 'avatar', 'aria-hidden': 'true' }, session.user.displayName.slice(0, 1).toUpperCase()),
-        h('div', { class: 'user-meta' }, h('div', {}, session.user.displayName), h('small', {}, session.user.role)),
+        h('div', { class: 'user-meta' }, h('div', {}, session.user.displayName), h('small', {}, session.user.fleetName ?? session.user.role)),
       ),
       h('button', { class: 'btn small', onclick: () => { stopFeed(); clearInterval(clockTimer); clearInterval(incidentTimer); mapView.map.remove(); document.removeEventListener('keydown', onKey); onLogout(); } }, 'Sign out'),
     ),
@@ -341,7 +343,12 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   function renderAlerts(): void {
     clear(alertsEl);
     const all = data?.alerts ?? [];
-    const list = all.filter((a) => showClosed || a.status !== 'resolved').filter((a) => sevFilter === 'all' || a.severity === sevFilter);
+    const list = all
+      .filter((a) => showClosed || a.status !== 'resolved')
+      .filter((a) => sevFilter === 'all' || a.severity === sevFilter)
+      .filter((a) => classFilter === 'all' || a.vesselClass === classFilter)
+      .filter((a) => groupFilter === 'all' || RULE_GROUP[a.ruleId] === groupFilter)
+      .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.ts - a.ts); // most urgent first
     const live = all.filter((a) => a.status !== 'resolved');
     const kpi = (value: number, label: string, cls = ''): HTMLElement => {
       const num = h('strong', {}, String(kpiShown.get(label) ?? value));
@@ -367,6 +374,20 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
         ),
         h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: showClosed, onchange: (e: Event) => { showClosed = (e.target as HTMLInputElement).checked; renderAlerts(); } }), 'show resolved'),
       ),
+      h(
+        'div',
+        { class: 'filters tight', role: 'group', 'aria-label': 'Vessel class' },
+        ...([['all', 'All vessels'], ['indian', '🇮🇳 Indian'], ['foreign', 'Foreign'], ['unknown', 'Unknown']] as const).map(([k, label]) =>
+          h('button', { class: `chip ${classFilter === k ? 'active' : ''}`, 'aria-pressed': String(classFilter === k), onclick: () => { classFilter = k; renderAlerts(); } }, label),
+        ),
+      ),
+      h(
+        'div',
+        { class: 'filters tight', role: 'group', 'aria-label': 'Alert type' },
+        ...([['all', 'Any type'], ['boundary', 'Maritime boundary'], ['zones', 'Critical zones'], ['integrity', 'Dark / spoofing']] as const).map(([k, label]) =>
+          h('button', { class: `chip ${groupFilter === k ? 'active' : ''}`, 'aria-pressed': String(groupFilter === k), onclick: () => { groupFilter = k; renderAlerts(); } }, label),
+        ),
+      ),
     );
     const ul = h('ul', { class: 'alert-list' });
     for (const a of list.slice(0, 100)) ul.append(alertItem(a));
@@ -382,7 +403,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
       h(
         'button',
         { class: 'alert-main', onclick: () => ctx.openOnMap(a.mmsi) },
-        h('div', { class: 'alert-top' }, h('span', { class: 'sevtag' }, a.severity.toUpperCase()), h('span', { class: 'rule' }, RULE_LABEL[a.ruleId] ?? a.ruleId), h('span', { class: 'time' }, `${fmtTime(a.ts)} · ${ago(a.ts, ref)}`)),
+        h('div', { class: 'alert-top' }, h('span', { class: 'sevtag' }, a.severity.toUpperCase()), h('span', { class: 'rule' }, RULE_LABEL[a.ruleId] ?? a.ruleId), a.vesselClass ? h('span', { class: `cls-tag ${a.vesselClass}` }, a.vesselClass === 'indian' ? 'INDIAN' : a.vesselClass.toUpperCase()) : null, h('span', { class: 'time' }, `${fmtTime(a.ts)} · ${ago(a.ts, ref)}`)),
         h('div', { class: 'alert-msg' }, a.message),
       ),
       a.status === 'resolved'

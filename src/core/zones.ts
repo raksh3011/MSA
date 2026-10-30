@@ -7,7 +7,7 @@
  * They are NOT the official gazetted limits. High-risk areas are indicative and based on
  * public maritime-security advisories. Never use for navigation, enforcement or legal purposes.
  */
-import { Area, type LatLon, type Poly } from './geo';
+import { Area, distanceToLineNm, type LatLon, type Poly } from './geo';
 import raw from './zones.data.json';
 
 interface RawNeighbour {
@@ -41,6 +41,25 @@ export const EEZ_POLYS = data.eez;
 export const TERRITORIAL_SEA = new Area(data.territorial);
 export const CONTIGUOUS_ZONE = new Area(data.contiguous);
 export const INDIA_EEZ = new Area(data.eez);
+
+/** Rough bounding box (with a 4 degree margin) per EEZ polygon, to skip far-away polygons cheaply. */
+const EEZ_BOXES = data.eez.map((p) => {
+  const ring = p[0] ?? [];
+  const lats = ring.map((c) => c[0]);
+  const lons = ring.map((c) => c[1]);
+  return { latMin: Math.min(...lats) - 4, latMax: Math.max(...lats) + 4, lonMin: Math.min(...lons) - 4, lonMax: Math.max(...lons) + 4 };
+});
+
+/** Distance in nautical miles from a position to the nearest limit of India's modelled EEZ (Infinity if far away). */
+export function distanceToEezNm(lat: number, lon: number): number {
+  let best = Infinity;
+  data.eez.forEach((poly, i) => {
+    const b = EEZ_BOXES[i];
+    if (!b || lat < b.latMin || lat > b.latMax || lon < b.lonMin || lon > b.lonMax) return;
+    best = Math.min(best, distanceToLineNm(lat, lon, poly[0] ?? []));
+  });
+  return best;
+}
 
 export interface ForeignWaters {
   code: string;

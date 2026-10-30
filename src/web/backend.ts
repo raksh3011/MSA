@@ -7,7 +7,7 @@
 import { createApp } from '../api/app';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
-import { SIM_VESSELS, Simulator } from '../core/simulator';
+import { FLEET_MMSIS, FLEET_NAME, Simulator } from '../core/simulator';
 import { DESKS } from '../core/stations';
 import type { Alert, DataSource, FeedInfo, PublicUser, Snapshot } from '../core/types';
 
@@ -80,11 +80,11 @@ export class Backend {
       lastLivePoll: 0,
     };
     await hub.addUser('analyst', DEMO_PASSWORD, 'analyst', 'Demo Analyst (Coast Guard)');
-    await hub.addUser('operator', DEMO_PASSWORD, 'operator', 'Demo Fleet Operator');
+    await hub.addUser('operator', DEMO_PASSWORD, 'operator', 'Fleet Manager', undefined, FLEET_NAME);
     await hub.addUser('admin', DEMO_PASSWORD, 'admin', 'Demo Administrator');
     for (const d of DESKS) await hub.addUser(`cg.${d.id}`, DEMO_PASSWORD, 'analyst', `CG Controller - ${d.name}`, d.id);
-    // the demo operator starts with the first few synthetic cargo/tanker vessels in their set
-    for (const v of SIM_VESSELS.filter((x) => x.shipType !== undefined && x.shipType >= 70 && x.behavior === 'lane').slice(0, 5)) hub.watch('operator', v.mmsi);
+    // the demo operator manages a company fleet (distinct from the generic synthetic traffic)
+    for (const mmsi of FLEET_MMSIS) hub.watch('operator', mmsi);
     const secret = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
     // The API clock follows the data: simulated time for the simulator, wall-clock for real AIS.
     const app = createApp({ hub, jwtSecret: secret, now: () => (demo.source === 'simulated' ? demo.sim.now : Date.now()) });

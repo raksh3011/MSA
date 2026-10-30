@@ -142,10 +142,26 @@ From any vessel's detail panel (**⚑ Report suspicious vessel**), or the map's 
 
 Demo/seeded controller accounts: `cg.mumbai`, `cg.gandhinagar`, `cg.kochi`, `cg.chennai`, `cg.portblair`. Station coordinates are approximate and this is **not a distress system** — use official channels in an emergency.
 
-## Risk rules
+## Alerts (Indian maritime security perspective)
 
-`eez_entry` · `territorial_sea` · `high_speed_in_eez` · `high_risk_zone` · `loitering` · `ais_gap` (dark vessel; only for vessels that were underway) · `position_jump` (spoofing/bad data) · `geofence` · `user_report`.
+Every vessel is classed **Indian** (flag India), **foreign** (valid foreign flag) or **unknown** (no valid flag state / user-reported contact), and alerts carry that class (filter chips in the queue; most urgent first).
+
+**Indian vessels**
+* `indian_critical_zone` — an Indian vessel enters a critical (high-risk) area: Gulf of Aden / Bab-el-Mandeb (high), Somali Basin / Hormuz / Malacca (medium) → advise the operator;
+* `indian_foreign_waters` — crosses into a neighbour's (modelled) waters: high for small / non-merchant craft (risk of detention), low for merchant ships trading with the neighbour;
+* `ais_gap` (dark vessel) and `position_jump` (spoofing / impossible movement) — high for Indian vessels.
+
+**Foreign and unknown vessels vs. the Indian maritime boundary** — graded by who they are (merchant < other < warship / unidentified; flags of interest and fast movers add a level):
+* `eez_approach` — closing on the EEZ limit, alert once when it crosses the approach window (default 60 nm; admin-configurable). Ordinary merchant traffic is ignored here;
+* `eez_entry` → `contiguous_entry` (12–24 nm) → `territorial_sea` (12 nm) — rising severity with each step; an unidentified vessel or a foreign warship in the territorial sea is **critical**;
+* `loitering` ("present in Indian waters") — a foreign/unknown vessel stationary inside the EEZ, contiguous zone or territorial sea (stricter closer in);
+* `high_speed_in_eez`, `geofence` (analyst-defined), `user_report` (see above), and `high_risk_zone` (foreign traffic in a risk area — low-priority note).
+
 Severity and thresholds come from an admin-editable **policy** (no hard-coded "unfriendly flags"). Alerts are de-duplicated with per-rule cooldowns.
+
+## Demo fleet
+
+The operator account manages **Bharat Ocean Carriers** (a fictional company): 10 Indian-flag tankers, bulkers and container ships (`BOC ARAVALI`, `BOC NILGIRI`, …) on real lanes, so the operator sees realistic alerts — e.g. `BOC ARAVALI` entering the Gulf of Aden, `BOC NILGIRI` entering the Strait of Hormuz approaches. The fleet page shows fleet KPIs, each vessel's current zone and any open alerts.
 
 ## Security
 
@@ -169,4 +185,4 @@ wrangler.toml        Worker + Durable Object + static assets
 
 ## What changed from the prototype
 
-Fake login → real auth + RBAC · committed API key / `.pyc` files → secrets + `.gitignore` · open `DELETE`/`POST /vessels/manual` → removed · in-memory global state → Hub with persistence · hard-coded flag politics → admin policy · hand-drawn rectangle "EEZ" → coastline-derived 12/24/200 nm zones with equidistance boundaries · misclassified ship types → fixed + tested · 1,168-line `app.js` → typed modules · no tests → 72 tests · Python server on Render → serverless · simulated-only data → real live AIS option.
+Fake login → real auth + RBAC · committed API key / `.pyc` files → secrets + `.gitignore` · open `DELETE`/`POST /vessels/manual` → removed · in-memory global state → Hub with persistence · hard-coded flag politics → admin policy · hand-drawn rectangle "EEZ" → coastline-derived 12/24/200 nm zones with equidistance boundaries · misclassified ship types → fixed + tested · 1,168-line `app.js` → typed modules · no tests → 79 tests · Python server on Render → serverless · simulated-only data → real live AIS option.

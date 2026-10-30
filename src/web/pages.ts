@@ -1,8 +1,23 @@
 import type { Alert, Incident, IncidentStatus, Policy, Vessel } from '../core/types';
+import { classifyZone } from '../core/boundary';
+import { highRiskZoneOf } from '../core/engine';
 import type { Ctx } from './ctx';
 import { clear, fmtDateTime, h } from './dom';
 import { CATEGORY_TEXT } from './report';
 import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_LABEL, SEVERITY_COLOR } from './style-tokens';
+
+function zoneText(v: Vessel): string {
+  const risk = highRiskZoneOf(v);
+  if (risk) return `${risk.level === 'high' ? 'High-risk' : 'Elevated-risk'}: ${risk.name}`;
+  const z = classifyZone(v.lat, v.lon);
+  switch (z.zone) {
+    case 'territorial': return 'Indian territorial sea';
+    case 'contiguous': return 'Indian contiguous zone';
+    case 'eez': return 'Indian EEZ';
+    case 'foreign': return `${z.country ?? 'Foreign'} waters`;
+    default: return 'Open sea';
+  }
+}
 
 function vesselTable(ctx: Ctx, list: Vessel[], empty: string): HTMLElement {
   if (list.length === 0) return h('p', { class: 'empty' }, empty);
@@ -10,7 +25,7 @@ function vesselTable(ctx: Ctx, list: Vessel[], empty: string): HTMLElement {
   return h(
     'table',
     { class: 'tbl' },
-    h('thead', {}, h('tr', {}, ...['Vessel', 'MMSI', 'Type', 'Flag', 'Speed', 'Status', ''].map((c) => h('th', {}, c)))),
+    h('thead', {}, h('tr', {}, ...['Vessel', 'MMSI', 'Type', 'Flag', 'Speed', 'Zone', 'Status', ''].map((c) => h('th', {}, c)))),
     h(
       'tbody',
       {},
@@ -19,13 +34,14 @@ function vesselTable(ctx: Ctx, list: Vessel[], empty: string): HTMLElement {
         return h(
           'tr',
           {},
-          h('td', {}, h('button', { class: 'link', onclick: () => ctx.openOnMap(v.mmsi) }, v.name)),
+          h('td', {}, h('button', { class: 'link', onclick: () => ctx.openOnMap(v.mmsi) }, v.name), v.origin === 'synthetic' ? h('span', { class: 'origin-tag synthetic', style: 'margin-left:6px' }, 'SYN') : null),
           h('td', {}, v.mmsi),
           h('td', {}, CATEGORY_LABEL[v.category]),
           h('td', {}, v.flag),
           h('td', {}, `${v.sog.toFixed(1)} kn`),
+          h('td', {}, zoneText(v)),
           h('td', {}, s ? h('span', { class: `badge sev-${s}` }, s) : h('span', { class: 'muted' }, 'normal')),
-          h('td', {}, h('button', { class: 'btn small', onclick: () => void ctx.toggleWatch(v.mmsi) }, ctx.watch().has(v.mmsi) ? 'Unwatch' : 'Watch')),
+          h('td', {}, h('button', { class: 'btn small', onclick: () => void ctx.toggleWatch(v.mmsi) }, ctx.watch().has(v.mmsi) ? 'Remove' : 'Add to set')),
         );
       }),
     ),
@@ -34,8 +50,17 @@ function vesselTable(ctx: Ctx, list: Vessel[], empty: string): HTMLElement {
 
 export function fleetPage(ctx: Ctx, onExport: () => void): HTMLElement {
   const vessels = ctx.data()?.vessels ?? [];
-  const mine = vessels.filter((v) => ctx.watch().has(v.mmsi));
-  const q = h('input', { type: 'search', placeholder: 'Search by vessel name or MMSI to add...', 'aria-label': 'Search vessels' });
+  const byMmsi = new Map(vessels.map((v) => [v.mmsi, v]));
+  const watched = [...ctx.watch()];
+  const mine = watched.map((m) => byMmsi.get(m)).filter((v): v is Vessel => v !== undefined);
+  const missing = watched.filter((m) => !byMmsi.has(m));
+  const sev = ctx.alertSeverity();
+  const inRisk = mine.filter((v) => highRiskZoneOf(v)).length;
+  const atRisk = mine.filter((v) => sev.has(v.mmsi)).length;
+  const avg = mine.length ? mine.reduce((n, v) => n + v.sog, 0) / mine.length : 0;
+  const fleetName = ctx.session.user.fleetName;
+
+  const q = h('input', { type: 'search', placeholder: 'Search by vessel name or MMSI to add to your set...', 'aria-label': 'Search vessels' });
   const results = h('div', {});
   q.addEventListener('input', () => {
     const s = (q as HTMLInputElement).value.trim().toLowerCase();
@@ -43,13 +68,16 @@ export function fleetPage(ctx: Ctx, onExport: () => void): HTMLElement {
     if (s.length < 2) return;
     results.append(vesselTable(ctx, vessels.filter((v) => v.name.toLowerCase().includes(s) || v.mmsi.includes(s)).slice(0, 15), 'No matching vessels'));
   });
+  const stat = (n: string | number, label: string): HTMLElement => h('div', { class: 'stat' }, h('strong', {}, String(n)), label);
   return h(
     'div',
     { class: 'page-inner' },
-    h('div', { class: 'page-head' }, h('h2', {}, ctx.isOperator ? 'My fleet' : 'My watchlist'), h('button', { class: 'btn', onclick: onExport }, '⬇ Export alerts (CSV)')),
-    h('p', { class: 'muted' }, ctx.isOperator ? 'Alerts are limited to the vessels on your watchlist. Export them for insurer and charterer incident reports.' : 'Vessels you have flagged for attention.'),
-    vesselTable(ctx, mine, 'Your watchlist is empty. Search below to add vessels.'),
-    h('h3', {}, 'Find vessels'),
+    h('div', { class: 'page-head' }, h('h2', {}, fleetName ? `${fleetName} - fleet` : ctx.isOperator ? 'My fleet' : 'My set'), h('button', { class: 'btn', onclick: onExport }, '⬇ Export alerts (CSV)')),
+    h('p', { class: 'muted' }, ctx.isOperator ? 'Your fleet and the alerts raised for it (high-risk areas, foreign waters, AIS gaps, spoofing). Export them for insurer and charterer incident reports.' : 'Vessels you have flagged for attention.'),
+    h('div', { class: 'stats' }, stat(watched.length, 'vessels in fleet'), stat(mine.length, 'tracked now'), stat(inRisk, 'in risk areas'), stat(atRisk, 'with open alerts'), stat(avg.toFixed(1), 'avg speed (kn)')),
+    vesselTable(ctx, mine, 'No fleet vessel is currently tracked. Add vessels below, or switch on the live/synthetic feed.'),
+    missing.length ? h('p', { class: 'muted' }, `Not currently reporting AIS (${missing.length}): ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? '…' : ''}`) : null,
+    h('h3', {}, 'Add vessels'),
     q,
     results,
   );
@@ -182,6 +210,7 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
   const f1 = field('highSpeedKn', 'High-speed threshold (kn)');
   const f2 = field('aisGapMinutes', 'AIS gap (minutes)');
   const f3 = field('loiterSogKn', 'Loitering speed (kn)');
+  const f4 = field('approachNm', 'EEZ approach alert distance (nm)');
   const flags = h('input', { id: 'p-flags', value: p.flagsOfInterest.join(', '), placeholder: 'e.g. Somalia, Yemen' });
   const msg = h('p', { class: 'muted', role: 'status' });
   return h(
@@ -198,6 +227,7 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
             highSpeedKn: parseFloat(f1[1].value),
             aisGapMinutes: parseFloat(f2[1].value),
             loiterSogKn: parseFloat(f3[1].value),
+            approachNm: parseFloat(f4[1].value),
             flagsOfInterest: (flags as HTMLInputElement).value.split(',').map((s) => s.trim()).filter(Boolean),
           });
           msg.textContent = r.status === 200 ? 'Policy saved.' : (r.data.error ?? 'Failed');
@@ -205,7 +235,7 @@ export async function adminPage(ctx: Ctx): Promise<HTMLElement> {
       },
       h('h3', {}, 'Risk policy'),
       h('p', { class: 'muted' }, 'Flags of interest raise EEZ-entry severity. This is a configurable policy decision, not hard-coded.'),
-      ...f1, ...f2, ...f3,
+      ...f1, ...f2, ...f3, ...f4,
       h('label', { for: 'p-flags' }, 'Flags of interest (comma-separated)'),
       flags,
       h('div', { class: 'row' }, h('span', {}), h('button', { class: 'btn primary', type: 'submit' }, 'Save policy')),

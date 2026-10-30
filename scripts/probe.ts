@@ -24,6 +24,6 @@ const add = (name: string, lane: LatLon[]): void => {
   console.log(name.padEnd(22), zones.join(' > '));
 };
 for (const [id, lane] of Object.entries(LANES)) add(`lane:${id}`, lane);
-for (const v of SIM_VESSELS) if (v.mmsi.startsWith('4190') || v.mmsi.startsWith('0000') || ['463000007', '538000808', '351000404', '477000901'].includes(v.mmsi)) add(v.name || v.mmsi, v.lane);
+for (const v of SIM_VESSELS) if (!v.name.match(/^M[VT] [A-Z]+ [A-Z]+$/) || v.mmsi.startsWith('4192')) add(v.name || v.mmsi, v.lane);
 // eslint-disable-next-line security/detect-non-literal-fs-filename
 writeFileSync(process.argv[2] ?? 'routes.json', JSON.stringify(out));

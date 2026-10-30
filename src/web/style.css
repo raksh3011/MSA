@@ -320,3 +320,9 @@ label { display: block; margin: .8em 0 .25em; color: var(--muted); font-size: .7
 .badge.st-investigating { background: #d99a06; }
 .badge.st-closed { background: #64748b; }
 .warn-text { color: var(--warn); font-size: .78rem; margin-top: 4px; }
+
+.filters.tight { padding-top: 0; padding-bottom: 6px; gap: 5px; }
+.cls-tag { padding: 0 .4em; border-radius: 4px; font-size: .6rem; font-weight: 750; letter-spacing: .05em; line-height: 1.7; border: 1px solid var(--border); color: var(--muted); }
+.cls-tag.indian { color: #f59e0b; border-color: #f59e0b; }
+.cls-tag.unknown { color: #ff2d55; border-color: #ff2d55; }
+.cls-tag.foreign { color: #60a5fa; border-color: #60a5fa; }

@@ -42,6 +42,23 @@ export const LANES: Record<string, LatLon[]> = {
   colomboEquator: [[5.4, 80.6], [1.5, 73.2], [-3.0, 68.0]],
 };
 
+/** A fictional shipping company whose vessels the demo fleet operator manages. */
+export const FLEET_NAME = 'Bharat Ocean Carriers';
+
+const FLEET: Array<{ mmsi: string; name: string; type: number; lane: keyof typeof LANES; reverse: boolean; phase: number; sog: number }> = [
+  { mmsi: '419200101', name: 'BOC ARAVALI', type: 80, lane: 'adenMumbai', reverse: true, phase: 0.78, sog: 13 },
+  { mmsi: '419200102', name: 'BOC NILGIRI', type: 70, lane: 'mumbaiGulf', reverse: false, phase: 0.85, sog: 13 },
+  { mmsi: '419200103', name: 'BOC VINDHYA', type: 71, lane: 'mumbaiKochi', reverse: false, phase: 0.25, sog: 14 },
+  { mmsi: '419200104', name: 'BOC SAHYADRI', type: 70, lane: 'kolkataChennai', reverse: false, phase: 0.5, sog: 12 },
+  { mmsi: '419200105', name: 'BOC KAVERI', type: 81, lane: 'mumbaiKandla', reverse: true, phase: 0.4, sog: 11 },
+  { mmsi: '419200106', name: 'BOC GANGA', type: 71, lane: 'colomboMalacca', reverse: false, phase: 0.6, sog: 15 },
+  { mmsi: '419200107', name: 'BOC NARMADA', type: 70, lane: 'chennaiColombo', reverse: false, phase: 0.35, sog: 13 },
+  { mmsi: '419200108', name: 'BOC SUTLEJ', type: 82, lane: 'adenColombo', reverse: true, phase: 0.7, sog: 14 },
+  { mmsi: '419200109', name: 'BOC GODAVARI', type: 70, lane: 'mumbaiKochi', reverse: true, phase: 0.6, sog: 12 },
+  { mmsi: '419200110', name: 'BOC KRISHNA', type: 71, lane: 'chittagongColombo', reverse: true, phase: 0.45, sog: 13 },
+];
+export const FLEET_MMSIS: string[] = FLEET.map((f) => f.mmsi);
+
 /** Lane traffic: lane, number of vessels, base speed (kn). */
 const LANE_TRAFFIC: Array<[keyof typeof LANES, number, number]> = [
   ['adenColombo', 8, 14], ['colomboMalacca', 7, 14], ['adenMumbai', 6, 13], ['mumbaiKochi', 5, 12], ['kochiSouth', 3, 12],
@@ -111,6 +128,12 @@ function buildFleet(): SimVessel[] {
     }
   }
 
+  // the operator's fleet
+  for (const f of FLEET) {
+    const lane = LANES[f.lane] as LatLon[];
+    fleet.push({ mmsi: f.mmsi, name: f.name, sog: f.sog, shipType: f.type, behavior: 'lane', lane: f.reverse ? [...lane].reverse() : lane, phase: f.phase, reportEverySec: 15 });
+  }
+
   // Indian Coast Guard / Navy patrols
   const patrols: Array<[string, number, LatLon[]]> = [
     ['ICG PATROL 01', 55, [[19.2, 71.0], [18.6, 70.4], [19.4, 70.2]]],
@@ -131,7 +154,10 @@ function buildFleet(): SimVessel[] {
     { mmsi: '000000101', name: '', sog: 22, shipType: undefined, behavior: 'lane', lane: [[22.0, 61.5], [21.4, 66.0], [21.9, 69.15]], phase: 0.85, reportEverySec: 20 },
     { mmsi: '000000202', name: '', sog: 18, shipType: undefined, behavior: 'lane', lane: [[8.0, 97.0], [8.6, 94.6]], phase: 0, reportEverySec: 20 },
     { mmsi: '463000007', name: 'SPEEDBOAT RAPTOR', sog: 28, shipType: 40, behavior: 'lane', lane: [[22.0, 61.0], [20.0, 64.0], [18.5, 66.0]], phase: 0, reportEverySec: 10 },
-    { mmsi: '538000808', name: 'MV BLACKOUT', sog: 13, shipType: 70, behavior: 'dark', lane: [[17.5, 70.8], [14.5, 72.0]], phase: 0.3, reportEverySec: 20 },
+    { mmsi: '419000808', name: 'MV BLACKOUT', sog: 13, shipType: 70, behavior: 'dark', lane: [[17.5, 70.8], [14.5, 72.0]], phase: 0.3, reportEverySec: 20 },
+    { mmsi: '419300111', name: 'MSV KANDLA SAIL 11', sog: 9, shipType: undefined, behavior: 'lane', lane: [[22.0, 67.8], [23.4, 66.0]], phase: 0.3, reportEverySec: 20 },
+    { mmsi: '412000777', name: 'FOREIGN WARSHIP 1', sog: 28, shipType: 35, behavior: 'lane', lane: [[15.5, 60.0], [15.4, 73.35]], phase: 0.6, reportEverySec: 10 },
+    { mmsi: '412000555', name: 'RESEARCH SURVEY 7', sog: 1.5, shipType: 59, behavior: 'lane', lane: [[8.2, 91.5], [8.5, 91.8]], phase: 0, reportEverySec: 20 },
     { mmsi: '351000404', name: 'MT PHANTOM', sog: 12, shipType: 80, behavior: 'jumper', lane: [[10.0, 70.0], [10.0, 68.0]], phase: 0.5, reportEverySec: 20 },
     { mmsi: '477000901', name: 'MV SILENT ANCHOR', sog: 0.6, shipType: 70, behavior: 'loiter', lane: [[12.0, 70.0]], phase: 0, reportEverySec: 20 },
   );

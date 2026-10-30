@@ -55,3 +55,20 @@ describe('sparse live coverage handling', () => {
     expect(hub.sweepGaps(40 * 60_000)).toBeGreaterThan(0);
   });
 });
+
+describe('operator fleet', () => {
+  it('has distinct Indian-flag vessels that all exist in the synthetic fleet', async () => {
+    const { FLEET_MMSIS, FLEET_NAME, SIM_VESSELS } = await import('../../src/core/simulator');
+    expect(FLEET_NAME).toBeTruthy();
+    expect(FLEET_MMSIS.length).toBeGreaterThanOrEqual(8);
+    expect(new Set(FLEET_MMSIS).size).toBe(FLEET_MMSIS.length);
+    expect(FLEET_MMSIS.every((m) => m.startsWith('419') && SIM_VESSELS.some((v) => v.mmsi === m))).toBe(true);
+  });
+
+  it('has globally unique MMSIs and names across the whole synthetic fleet', async () => {
+    const { SIM_VESSELS } = await import('../../src/core/simulator');
+    expect(new Set(SIM_VESSELS.map((v) => v.mmsi)).size).toBe(SIM_VESSELS.length);
+    const named = SIM_VESSELS.filter((v) => v.name).map((v) => v.name);
+    expect(new Set(named).size).toBe(named.length);
+  });
+});

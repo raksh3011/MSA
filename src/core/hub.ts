@@ -4,7 +4,7 @@
  * and the in-browser demo both wrap exactly this class.
  */
 import { hashPassword } from './auth';
-import { DEFAULT_POLICY, Deduper, evaluateGaps, evaluateVessel, type Finding, type RuleContext } from './engine';
+import { DEFAULT_POLICY, Deduper, classOf, evaluateGaps, evaluateVessel, type Finding, type RuleContext } from './engine';
 import type {
   Alert,
   AlertStatus,
@@ -163,6 +163,7 @@ export class Hub {
       severity: f.severity,
       mmsi: v.mmsi,
       vesselName: v.name,
+      vesselClass: classOf(v),
       message: f.message,
       lat: v.lat,
       lon: v.lon,
@@ -305,12 +306,12 @@ export class Hub {
   }
 
   // ── users ──────────────────────────────────────────────────────────────────
-  async addUser(username: string, password: string, role: Role, displayName: string, station?: string): Promise<void> {
-    this.users.set(username, { username, role, displayName, station, passwordHash: await hashPassword(password) });
+  async addUser(username: string, password: string, role: Role, displayName: string, station?: string, fleetName?: string): Promise<void> {
+    this.users.set(username, { username, role, displayName, station, fleetName, passwordHash: await hashPassword(password) });
     this.persist();
   }
   publicUser(u: User): PublicUser {
-    return { username: u.username, role: u.role, displayName: u.displayName, station: u.station };
+    return { username: u.username, role: u.role, displayName: u.displayName, station: u.station, fleetName: u.fleetName };
   }
 
   // ── audit ──────────────────────────────────────────────────────────────────

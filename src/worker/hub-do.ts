@@ -10,7 +10,7 @@ import { createApp } from '../api/app';
 import { verifyPassword, verifyToken } from '../core/auth';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
-import { Simulator } from '../core/simulator';
+import { FLEET_MMSIS, FLEET_NAME, Simulator } from '../core/simulator';
 import { DESKS } from '../core/stations';
 import type { DataSource, PositionReport, Role } from '../core/types';
 import { parseAisMessage } from './ais';
@@ -67,6 +67,12 @@ export class OrvmsHub extends DurableObject<Env> {
       // Seed on first run, and re-seed when the SEED_PASSWORD secret has been rotated.
       const admin = this.hub.users.get('admin');
       if (!admin || !this.hub.users.has('cg.mumbai') || (this.env.SEED_PASSWORD && !(await verifyPassword(this.env.SEED_PASSWORD, admin.passwordHash)))) await this.seedUsers();
+      // Make sure the demo operator manages the company fleet (also for state saved by an earlier version).
+      const op = this.hub.users.get('operator');
+      if (op) {
+        op.fleetName ??= FLEET_NAME;
+        if (this.hub.watchlistOf('operator').length === 0) for (const mmsi of FLEET_MMSIS) this.hub.watch('operator', mmsi);
+      }
       this.hub.onPersist = () => this.scheduleSave();
     });
   }
@@ -86,7 +92,8 @@ export class OrvmsHub extends DurableObject<Env> {
     }
     await this.hub.addUser('admin', pw, 'admin', 'Administrator');
     await this.hub.addUser('analyst', pw, 'analyst', 'Maritime Analyst');
-    await this.hub.addUser('operator', pw, 'operator', 'Fleet Operator');
+    await this.hub.addUser('operator', pw, 'operator', 'Fleet Manager', undefined, FLEET_NAME);
+    for (const mmsi of FLEET_MMSIS) this.hub.watch('operator', mmsi);
     // Coast Guard controllers: one analyst account per regional HQ so reports route to a named person/desk
     for (const d of DESKS) await this.hub.addUser(`cg.${d.id}`, pw, 'analyst', `CG Controller - ${d.name}`, d.id);
   }
