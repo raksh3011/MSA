@@ -1,0 +1,25 @@
+name = "navsight"
+main = "src/worker/index.ts"
+compatibility_date = "2025-01-01"
+
+# The built frontend (npm run build -> dist/) is served from the same origin, for free.
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "NavSightHub"
+
+# SQLite-backed Durable Objects are available on the Workers Free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["NavSightHub"]
+
+[vars]
+ALLOWED_ORIGINS = "*"
+
+# Secrets (never commit):
+#   wrangler secret put JWT_SECRET         (long random string)
+#   wrangler secret put SEED_PASSWORD      (>= 8 chars; password for the seeded admin/analyst/operator users)
+#   wrangler secret put AISSTREAM_API_KEY  (optional; without it the server runs the built-in simulator)
