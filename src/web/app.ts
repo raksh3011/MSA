@@ -193,6 +193,28 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     { id: 'admin', label: 'Administration', show: session.user.role === 'admin' },
   ];
 
+  // Compact account menu: avatar button -> name, role, theme toggle and Sign out (always reachable at any width).
+  const logout = (): void => {
+    stopFeed();
+    clearInterval(clockTimer);
+    clearInterval(incidentTimer);
+    mapView.map.remove();
+    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('click', closeMenu);
+    onLogout();
+  };
+  const menuPanel = h(
+    'div',
+    { class: 'user-menu', role: 'menu', hidden: true },
+    h('div', { class: 'um-head' }, h('strong', {}, session.user.displayName), h('span', { class: 'muted' }, session.user.fleetName ?? session.user.role), h('span', { class: 'muted' }, `@${session.user.username}`)),
+    h('button', { class: 'um-item', role: 'menuitem', onclick: () => { toggleTheme(); ctx.toast(`${getTheme()} theme`); } }, '◐  Switch light / dark theme'),
+    h('button', { class: 'um-item danger', role: 'menuitem', onclick: logout }, '⎋  Sign out'),
+  );
+  const avatarBtn = h('button', { class: 'avatar-btn', 'aria-haspopup': 'menu', 'aria-label': `Account menu for ${session.user.displayName}`, title: 'Account', onclick: (e: Event) => { e.stopPropagation(); menuPanel.hidden = !menuPanel.hidden; } }, session.user.displayName.slice(0, 1).toUpperCase());
+  const closeMenu = (): void => { menuPanel.hidden = true; };
+  const userMenu = h('div', { class: 'user-menu-wrap' }, avatarBtn, menuPanel);
+  document.addEventListener('click', closeMenu);
+
   const header = h(
     'header',
     { class: 'hdr' },
@@ -206,14 +228,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
       sourceEl,
       statusEl,
       clockEl,
-      h('button', { class: 'btn small ghost', title: 'Toggle light / dark theme', 'aria-label': 'Toggle theme', onclick: () => { toggleTheme(); ctx.toast(`${getTheme()} theme`); } }, '◐'),
-      h(
-        'div',
-        { class: 'user-chip' },
-        h('span', { class: 'avatar', 'aria-hidden': 'true' }, session.user.displayName.slice(0, 1).toUpperCase()),
-        h('div', { class: 'user-meta' }, h('div', {}, session.user.displayName), h('small', {}, session.user.fleetName ?? session.user.role)),
-      ),
-      h('button', { class: 'btn small', onclick: () => { stopFeed(); clearInterval(clockTimer); clearInterval(incidentTimer); mapView.map.remove(); document.removeEventListener('keydown', onKey); onLogout(); } }, 'Sign out'),
+      userMenu,
     ),
   );
 
@@ -260,6 +275,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
       searchInput.focus();
     } else if (e.key === 'Escape') {
       resultsEl.hidden = true;
+      menuPanel.hidden = true;
       if (typing) (e.target as HTMLElement).blur();
       else if (selected) select(null);
     }

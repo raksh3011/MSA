@@ -326,3 +326,15 @@ label { display: block; margin: .8em 0 .25em; color: var(--muted); font-size: .7
 .cls-tag.indian { color: #f59e0b; border-color: #f59e0b; }
 .cls-tag.unknown { color: #ff2d55; border-color: #ff2d55; }
 .cls-tag.foreign { color: #60a5fa; border-color: #60a5fa; }
+
+/* account menu */
+.user-menu-wrap { position: relative; flex: none; }
+.avatar-btn { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--accent); background: var(--accent); color: var(--accent-ink); font: 700 .9rem var(--font); cursor: pointer; }
+.avatar-btn:hover { filter: brightness(1.1); }
+.user-menu { position: absolute; right: 0; top: calc(100% + 8px); min-width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); z-index: 3000; padding: 6px; animation: fadeUp .15s ease-out; }
+.um-head { display: flex; flex-direction: column; padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.um-item { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); font: inherit; padding: 9px 10px; border-radius: 6px; cursor: pointer; }
+.um-item:hover, .um-item:focus-visible { background: var(--surface-2); }
+.um-item.danger { color: var(--bad); font-weight: 600; }
+@media (max-width: 1500px) { .clock { display: none; } }
+@media (max-width: 1280px) { .source-select { max-width: 150px; } .tab { padding: 0 8px; } .hdr .brand-name { font-size: .95rem; } }
