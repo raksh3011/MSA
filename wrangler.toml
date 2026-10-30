@@ -1,4 +1,4 @@
-name = "navsight"
+name = "orvms"
 main = "src/worker/index.ts"
 compatibility_date = "2025-01-01"
 
@@ -9,15 +9,17 @@ not_found_handling = "single-page-application"
 
 [[durable_objects.bindings]]
 name = "HUB"
-class_name = "NavSightHub"
+class_name = "OrvmsHub"
 
 # SQLite-backed Durable Objects are available on the Workers Free plan.
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["NavSightHub"]
+new_sqlite_classes = ["OrvmsHub"]
 
 [vars]
 ALLOWED_ORIGINS = "*"
+# aisstream (needs AISSTREAM_API_KEY) | digitraffic (real Baltic AIS, no key) | simulated (Indian Ocean scenarios)
+DATA_SOURCE = "simulated"
 
 # Secrets (never commit):
 #   wrangler secret put JWT_SECRET         (long random string)

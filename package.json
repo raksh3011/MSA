@@ -1,8 +1,8 @@
 {
-  "name": "navsight",
+  "name": "orvms",
   "version": "3.0.0",
   "private": true,
-  "description": "NavSight - maritime situational awareness platform (serverless, zero-cost hosting)",
+  "description": "ORVMS - Ocean Risk and Vessel Monitoring System (serverless, zero-cost hosting)",
   "type": "module",
   "scripts": {
     "dev": "vite",

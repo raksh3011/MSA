@@ -1,5 +1,5 @@
 /**
- * NavSight REST API (Hono). Platform-neutral: runs inside the Cloudflare Durable Object
+ * ORVMS REST API (Hono). Platform-neutral: runs inside the Cloudflare Durable Object
  * in production and inside the browser (via app.fetch) for the zero-backend demo.
  */
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
@@ -9,7 +9,7 @@ import { checkBoundary } from '../core/boundary';
 import { isValidCoord } from '../core/geo';
 import type { Hub } from '../core/hub';
 import type { Alert, Policy, Role } from '../core/types';
-import { EEZ_ZONES, FISHING_BOUNDARY, HIGH_RISK_ZONES } from '../core/zones';
+import { BOUNDARIES, FOREIGN_WATERS, HIGH_RISK_ZONES, ZONES_META } from '../core/zones';
 import { RateLimiter } from './ratelimit';
 import { alertsToCsv } from './csv';
 
@@ -78,10 +78,12 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   app.get('/api/public/zones', (c) =>
     c.json({
-      disclaimer: 'Illustrative zones for situational awareness only. Not for navigation or legal use.',
-      eez: EEZ_ZONES,
+      disclaimer: 'Modelled zones for situational awareness only. Not the official gazetted limits. Not for navigation or legal use.',
+      method: ZONES_META.method,
+      source: ZONES_META.source,
+      boundaries: BOUNDARIES,
+      neighbours: FOREIGN_WATERS.map((f) => ({ code: f.code, name: f.name })),
       highRisk: HIGH_RISK_ZONES,
-      boundary: FISHING_BOUNDARY,
     }),
   );
 
@@ -167,7 +169,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   app.get('/api/reports/alerts.csv', requireAuth(), (c) => {
     const csv = alertsToCsv(visibleAlerts(c.get('claims')));
     return new Response(csv, {
-      headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="navsight-alerts.csv"', 'Access-Control-Allow-Origin': '*' },
+      headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="orvms-alerts.csv"', 'Access-Control-Allow-Origin': '*' },
     });
   });
 

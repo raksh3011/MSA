@@ -2,132 +2,151 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Geofence, Severity, Vessel, VesselCategory } from '../core/types';
 import type { LatLon } from '../core/geo';
-import { EEZ_ZONES, FISHING_BOUNDARY, HIGH_RISK_ZONES } from '../core/zones';
+import {
+  BOUNDARIES,
+  CONTIGUOUS_POLYS,
+  EEZ_POLYS,
+  FOREIGN_WATERS,
+  HIGH_RISK_ZONES,
+  TERRITORIAL_POLYS,
+} from '../core/zones';
 import { h } from './dom';
-
-export const CATEGORY_COLOR: Record<VesselCategory, string> = {
-  naval: '#4895ef',
-  coast_guard: '#00b4d8',
-  cargo: '#06d6a0',
-  tanker: '#ffd60a',
-  passenger: '#ff9f1c',
-  fishing: '#c8d0d8',
-  highspeed: '#f72585',
-  other: '#90caf9',
-};
-export const CATEGORY_LABEL: Record<VesselCategory, string> = {
-  naval: 'Naval',
-  coast_guard: 'Coast Guard',
-  cargo: 'Cargo',
-  tanker: 'Tanker',
-  passenger: 'Passenger',
-  fishing: 'Fishing',
-  highspeed: 'High-speed craft',
-  other: 'Other / unknown',
-};
-export const SEVERITY_COLOR: Record<Severity, string> = {
-  low: '#7aa2f7',
-  medium: '#e0af68',
-  high: '#ff7a59',
-  critical: '#f7768e',
-};
+import { VesselLayer } from './vesselLayer';
 
 // Esri World Ocean Base: free to use with attribution, no API key, and bathymetry suits a maritime product.
 const TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}';
-const ATTRIBUTION = 'Tiles &copy; Esri &mdash; Sources: GEBCO, NOAA, National Geographic, DeLorme, HERE, Geonames.org, and other contributors';
+const ATTRIBUTION = 'Tiles &copy; Esri &mdash; GEBCO, NOAA, National Geographic, DeLorme, HERE, Geonames.org and contributors';
 
 export function addBaseLayer(map: L.Map): void {
   L.tileLayer(TILES, { attribution: ATTRIBUTION, maxZoom: 12, maxNativeZoom: 10 }).addTo(map);
 }
 
-export function addZoneLayers(map: L.Map): void {
-  for (const z of EEZ_ZONES) {
-    L.polygon(z.polygon, { color: '#1d4ed8', weight: 1.5, dashArray: '6 6', fillOpacity: 0.05, interactive: false }).addTo(map);
-  }
+export type ZoneKey = 'territorial' | 'contiguous' | 'eez' | 'foreign' | 'boundary' | 'highRisk' | 'geofence';
+
+export const ZONE_LABEL: Record<ZoneKey, string> = {
+  territorial: 'Territorial sea (12 nm)',
+  contiguous: 'Contiguous zone (24 nm)',
+  eez: 'Exclusive Economic Zone (200 nm)',
+  foreign: 'Neighbouring waters (modelled)',
+  boundary: 'Maritime boundary lines (modelled)',
+  highRisk: 'High-risk areas (indicative)',
+  geofence: 'Geofences',
+};
+
+export const ZONE_STYLE: Record<ZoneKey, { color: string; fill: number; dash?: string }> = {
+  territorial: { color: '#2563eb', fill: 0.28 },
+  contiguous: { color: '#3b82f6', fill: 0.16 },
+  eez: { color: '#1d4ed8', fill: 0.06, dash: '7 6' },
+  foreign: { color: '#64748b', fill: 0.14, dash: '2 4' },
+  boundary: { color: '#ea580c', fill: 0 },
+  highRisk: { color: '#dc2626', fill: 0.14 },
+  geofence: { color: '#7c3aed', fill: 0.1 },
+};
+
+export type ZoneGroups = Record<ZoneKey, L.LayerGroup>;
+
+/** Draw all modelled zones into toggleable groups. */
+export function buildZoneGroups(): ZoneGroups {
+  const groups = Object.fromEntries((Object.keys(ZONE_LABEL) as ZoneKey[]).map((k) => [k, L.layerGroup()])) as ZoneGroups;
+  const poly = (rings: LatLon[][], key: ZoneKey, tip?: string, extra: L.PolylineOptions = {}): void => {
+    const st = ZONE_STYLE[key];
+    const p = L.polygon(rings, { color: st.color, weight: key === 'eez' ? 1.6 : 1, fillOpacity: st.fill, dashArray: st.dash, ...extra });
+    if (tip) p.bindTooltip(tip, { sticky: true });
+    p.addTo(groups[key]);
+  };
+
+  for (const p of EEZ_POLYS) poly(p, 'eez', 'India EEZ - modelled 200 nm limit (not the official gazetted limit)', { interactive: false });
+  for (const p of CONTIGUOUS_POLYS) poly(p, 'contiguous', 'Contiguous zone (12-24 nm) - modelled');
+  for (const p of TERRITORIAL_POLYS) poly(p, 'territorial', 'Territorial sea (0-12 nm) - modelled', { weight: 1.2 });
+  for (const f of FOREIGN_WATERS) for (const p of f.polys) poly(p, 'foreign', `${f.name} waters - modelled equidistance, not official`);
   for (const z of HIGH_RISK_ZONES) {
-    L.polygon(z.polygon, { color: '#d6293e', weight: 1.5, fillOpacity: 0.12, interactive: false })
-      .bindTooltip(z.name, { sticky: true })
-      .addTo(map);
+    const st = ZONE_STYLE.highRisk;
+    L.polygon(z.polygon, {
+      color: z.level === 'high' ? '#dc2626' : '#d97706',
+      weight: 1.5,
+      dashArray: z.level === 'high' ? undefined : '6 5',
+      fillColor: z.level === 'high' ? '#dc2626' : '#f59e0b',
+      fillOpacity: st.fill,
+    })
+      .bindTooltip(`${z.name} - ${z.level === 'high' ? 'high' : 'elevated'} risk (indicative)`, { sticky: true })
+      .addTo(groups.highRisk);
   }
-  L.polyline(FISHING_BOUNDARY as LatLon[], { color: '#e85d04', weight: 3, dashArray: '2 8' })
-    .bindTooltip('Illustrative maritime boundary', { sticky: true })
-    .addTo(map);
+  for (const b of BOUNDARIES) {
+    for (const line of b.lines) {
+      L.polyline(line, { color: ZONE_STYLE.boundary.color, weight: 3, dashArray: '9 6', opacity: 0.95 })
+        .bindTooltip(`${b.name} - modelled equidistance line, not the official boundary`, { sticky: true })
+        .addTo(groups.boundary);
+    }
+  }
+  return groups;
+}
+
+const DEFAULT_VISIBLE: Record<ZoneKey, boolean> = {
+  territorial: true,
+  contiguous: true,
+  eez: true,
+  foreign: true,
+  boundary: true,
+  highRisk: true,
+  geofence: true,
+};
+
+/** Fisherman / simple maps: all zone groups on. */
+export function addZoneLayers(map: L.Map): ZoneGroups {
+  const g = buildZoneGroups();
+  for (const k of Object.keys(g) as ZoneKey[]) if (DEFAULT_VISIBLE[k]) g[k].addTo(map);
+  return g;
+}
+
+export interface MapHandlers {
+  onSelect: (mmsi: string) => void;
+  onMapClick: (lat: number, lon: number) => void;
+  onCursor: (lat: number, lon: number) => void;
 }
 
 export class MapView {
   readonly map: L.Map;
-  private readonly renderer = L.canvas({ padding: 0.5 });
-  private readonly markers = new Map<string, L.CircleMarker>();
-  private readonly geofences = L.layerGroup();
-  private trail: L.Polyline | undefined;
+  readonly zones: ZoneGroups;
+  readonly vessels: VesselLayer;
 
-  constructor(
-    el: HTMLElement,
-    private readonly onSelect: (mmsi: string) => void,
-    onMapClick: (lat: number, lon: number) => void,
-  ) {
-    this.map = L.map(el, { center: [14, 72], zoom: 4, minZoom: 2, worldCopyJump: true, preferCanvas: true });
+  constructor(el: HTMLElement, handlers: MapHandlers, center: [number, number] = [14, 74], zoom = 4) {
+    this.map = L.map(el, { center, zoom, minZoom: 2, worldCopyJump: true, zoomControl: false, attributionControl: true });
+    L.control.zoom({ position: 'bottomright' }).addTo(this.map);
+    L.control.scale({ position: 'bottomleft', imperial: false }).addTo(this.map);
     addBaseLayer(this.map);
-    addZoneLayers(this.map);
-    this.geofences.addTo(this.map);
-    this.map.on('click', (e: L.LeafletMouseEvent) => onMapClick(e.latlng.lat, e.latlng.lng));
+    this.zones = buildZoneGroups();
+    for (const k of Object.keys(this.zones) as ZoneKey[]) if (DEFAULT_VISIBLE[k]) this.zones[k].addTo(this.map);
+    this.vessels = new VesselLayer({ onSelect: handlers.onSelect });
+    this.vessels.addTo(this.map);
+    this.map.on('click', (e: L.LeafletMouseEvent) => handlers.onMapClick(e.latlng.lat, e.latlng.lng));
+    this.map.on('mousemove', (e: L.LeafletMouseEvent) => handlers.onCursor(e.latlng.lat, e.latlng.lng));
   }
 
-  update(vessels: readonly Vessel[], alertSeverity: ReadonlyMap<string, Severity>, selected: string | null, watched: ReadonlySet<string>): void {
-    const seen = new Set<string>();
-    for (const v of vessels) {
-      seen.add(v.mmsi);
-      const sev = alertSeverity.get(v.mmsi);
-      const isSel = v.mmsi === selected;
-      const style: L.CircleMarkerOptions = {
-        radius: isSel ? 9 : sev ? 7 : watched.has(v.mmsi) ? 7 : 5,
-        color: isSel ? '#000000' : sev ? SEVERITY_COLOR[sev] : watched.has(v.mmsi) ? '#000000' : '#0b1623',
-        weight: isSel || sev || watched.has(v.mmsi) ? 2.5 : 1,
-        fillColor: CATEGORY_COLOR[v.category],
-        fillOpacity: 0.95,
-      };
-      let m = this.markers.get(v.mmsi);
-      if (!m) {
-        m = L.circleMarker([v.lat, v.lon], { ...style, renderer: this.renderer });
-        m.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          this.onSelect(v.mmsi);
-        });
-        m.bindTooltip(() => h('div', {}, h('strong', {}, v.name), h('br'), `${CATEGORY_LABEL[v.category]} - ${v.flag}`), { direction: 'top' });
-        m.addTo(this.map);
-        this.markers.set(v.mmsi, m);
-      } else {
-        m.setLatLng([v.lat, v.lon]);
-        m.setStyle(style);
-      }
-    }
-    for (const [mmsi, m] of this.markers) {
-      if (!seen.has(mmsi)) {
-        m.remove();
-        this.markers.delete(mmsi);
-      }
-    }
+  setZoneVisible(key: ZoneKey, on: boolean): void {
+    const g = this.zones[key];
+    if (on) g.addTo(this.map);
+    else g.remove();
   }
 
-  showTrail(points: ReadonlyArray<[number, number]> | null): void {
-    this.trail?.remove();
-    this.trail = undefined;
-    if (points && points.length > 1) {
-      this.trail = L.polyline(points as LatLon[], { color: '#0b1623', weight: 2, opacity: 0.8, dashArray: '4 4' }).addTo(this.map);
-    }
+  showVessels(vessels: readonly Vessel[], alertSeverity: ReadonlyMap<string, Severity>, selected: string | null, watched: ReadonlySet<string>): void {
+    this.vessels.set({ vessels, alertSeverity, selected, watched });
+  }
+
+  setHidden(hidden: ReadonlySet<VesselCategory>): void {
+    this.vessels.set({ hidden });
   }
 
   showGeofences(list: readonly Geofence[]): void {
-    this.geofences.clearLayers();
+    this.zones.geofence.clearLayers();
     for (const g of list) {
-      L.circle([g.lat, g.lon], { radius: g.radiusNm * 1852, color: '#bb9af7', weight: 1.5, fillOpacity: 0.08 })
-        .bindTooltip(g.name, { sticky: true })
-        .addTo(this.geofences);
+      L.circle([g.lat, g.lon], { radius: g.radiusNm * 1852, color: ZONE_STYLE.geofence.color, weight: 1.5, fillOpacity: ZONE_STYLE.geofence.fill })
+        .bindTooltip(h('div', {}, h('strong', {}, g.name), h('br'), `${g.radiusNm} nm radius`), { sticky: true })
+        .addTo(this.zones.geofence);
     }
   }
 
-  focus(lat: number, lon: number): void {
-    this.map.setView([lat, lon], Math.max(this.map.getZoom(), 6), { animate: true });
+  focus(lat: number, lon: number, zoom?: number): void {
+    this.map.setView([lat, lon], zoom ?? Math.max(this.map.getZoom(), 6), { animate: true });
   }
 
   invalidate(): void {

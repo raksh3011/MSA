@@ -8,15 +8,18 @@
 import { DurableObject } from 'cloudflare:workers';
 import { createApp } from '../api/app';
 import { verifyToken } from '../core/auth';
+import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
 import { Simulator } from '../core/simulator';
-import type { PositionReport, Role } from '../core/types';
+import type { DataSource, PositionReport, Role } from '../core/types';
 import { parseAisMessage } from './ais';
 
 export interface Env {
   HUB: DurableObjectNamespace;
   JWT_SECRET: string;
   AISSTREAM_API_KEY?: string;
+  /** 'aisstream' | 'digitraffic' | 'simulated'. Default: aisstream when a key is set, otherwise simulated. */
+  DATA_SOURCE?: string;
   SEED_PASSWORD?: string;
   ALLOWED_ORIGINS?: string;
 }
@@ -27,13 +30,15 @@ const MIN_REPORT_GAP_MS = 10_000; // per-MMSI throttle: keeps CPU and bandwidth 
 const AIS_BBOX = [[-10, 44], [30, 100]]; // Indian Ocean region of interest
 const MAX_STATIC = 20_000;
 
-export class NavSightHub extends DurableObject<Env> {
+export class OrvmsHub extends DurableObject<Env> {
   private readonly hub = new Hub();
   private readonly app;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private upstream: WebSocket | undefined;
   private sim: Simulator | undefined;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly digitraffic = new DigitrafficClient((u, i) => fetch(u, i), { 'Digitraffic-User': 'ORVMS-student-project', 'Accept-Encoding': 'gzip' });
   private lastActivity = Date.now();
   private readonly lastAccepted = new Map<string, number>();
   private readonly statics = new Map<string, { name?: string; type?: number }>();
@@ -45,13 +50,20 @@ export class NavSightHub extends DurableObject<Env> {
       jwtSecret: env.JWT_SECRET,
       allowedOrigins: (env.ALLOWED_ORIGINS ?? '*').split(',').map((s) => s.trim()),
     });
-    this.hub.source = env.AISSTREAM_API_KEY ? 'live' : 'demo';
+    this.hub.source = OrvmsHub.pickSource(env);
     void ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<ReturnType<Hub['exportState']>>('state');
       if (saved) this.hub.importState(saved);
       if (this.hub.users.size === 0) await this.seedUsers();
       this.hub.onPersist = () => this.scheduleSave();
     });
+  }
+
+  static pickSource(env: Env): DataSource {
+    if (env.DATA_SOURCE === 'digitraffic') return 'digitraffic';
+    if (env.DATA_SOURCE === 'simulated') return 'simulated';
+    if (env.DATA_SOURCE === 'aisstream' || env.AISSTREAM_API_KEY) return env.AISSTREAM_API_KEY ? 'aisstream' : 'simulated';
+    return 'simulated';
   }
 
   private async seedUsers(): Promise<void> {
@@ -104,8 +116,11 @@ export class NavSightHub extends DurableObject<Env> {
   // ── lifecycle: run only while someone is watching ──────────────────────────
   private ensureRunning(): void {
     if (this.tickTimer) return;
-    if (this.env.AISSTREAM_API_KEY) void this.connectUpstream();
-    else {
+    if (this.hub.source === 'aisstream') void this.connectUpstream();
+    else if (this.hub.source === 'digitraffic') {
+      void this.pollDigitraffic();
+      this.pollTimer = setInterval(() => void this.pollDigitraffic(), 10_000);
+    } else {
       this.sim = new Simulator();
       for (let i = 0; i < 45; i++) this.stepSim(this.sim); // warm start: first viewers see history, not an empty sea
     }
@@ -117,6 +132,8 @@ export class NavSightHub extends DurableObject<Env> {
     this.tickTimer = undefined;
     this.upstream?.close();
     this.upstream = undefined;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = undefined;
     this.sim = undefined;
   }
 
@@ -148,6 +165,15 @@ export class NavSightHub extends DurableObject<Env> {
     const who = ws.deserializeAttachment() as { sub: string; role: Role } | null;
     if (!who) return JSON.stringify({ ...snap, alerts: [] });
     return JSON.stringify({ ...snap, alerts: this.hub.alertsFor(who.role, who.sub).slice(0, 100) });
+  }
+
+  private async pollDigitraffic(): Promise<void> {
+    try {
+      const now = Date.now();
+      for (const r of await this.digitraffic.poll(now)) this.hub.ingest(r, now);
+    } catch (err) {
+      console.error('Digitraffic poll failed', err);
+    }
   }
 
   private stepSim(sim: Simulator): void {

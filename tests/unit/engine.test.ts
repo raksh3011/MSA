@@ -13,17 +13,17 @@ const rules = (v: Vessel, prev: Vessel | undefined, c = ctx()) => evaluateVessel
 
 describe('risk rules', () => {
   it('flags a foreign vessel entering the EEZ', () => {
-    expect(rules(vessel({ lat: 15, lon: 70 }), vessel({ lat: 15, lon: 55 }))).toContain('eez_entry');
+    expect(rules(vessel({ lat: 17.2, lon: 70.5 }), vessel({ lat: 17.2, lon: 62 }))).toContain('eez_entry');
   });
 
   it('does not flag Indian-flag or military vessels', () => {
-    expect(rules(vessel({ flag: 'India' }), vessel({ lat: 15, lon: 55 }))).not.toContain('eez_entry');
-    expect(rules(vessel({ category: 'naval' }), vessel({ lat: 15, lon: 55 }))).not.toContain('eez_entry');
+    expect(rules(vessel({ flag: 'India', lat: 17.2, lon: 70.5 }), vessel({ lat: 17.2, lon: 62 }))).not.toContain('eez_entry');
+    expect(rules(vessel({ category: 'naval', lat: 17.2, lon: 70.5 }), vessel({ lat: 17.2, lon: 62 }))).not.toContain('eez_entry');
   });
 
   it('escalates to critical for a fast vessel of a flag of interest', () => {
     const policy = { ...DEFAULT_POLICY, flagsOfInterest: ['Liberia'] };
-    const f = evaluateVessel(vessel({ sog: 30 }), vessel({ lat: 15, lon: 55 }), ctx({ policy }));
+    const f = evaluateVessel(vessel({ sog: 30, lat: 17.2, lon: 70.5 }), vessel({ lat: 17.2, lon: 62 }), ctx({ policy }));
     expect(f.find((x) => x.ruleId === 'eez_entry')?.severity).toBe('critical');
   });
 
@@ -33,13 +33,26 @@ describe('risk rules', () => {
     expect(rules(fast, fast)).not.toContain('high_speed_in_eez');
   });
 
-  it('flags entry into a high-risk zone', () => {
-    expect(rules(vessel({ lat: 13, lon: 48 }), vessel({ lat: 20, lon: 48 }))).toContain('high_risk_zone');
+  it('flags entry into a high-risk zone, with severity following the zone level', () => {
+    const aden = evaluateVessel(vessel({ lat: 13, lon: 48 }), vessel({ lat: 20, lon: 48 }), ctx()).find((x) => x.ruleId === 'high_risk_zone');
+    expect(aden?.severity).toBe('high');
+    const somali = evaluateVessel(vessel({ lat: 0, lon: 50 }), vessel({ lat: 20, lon: 48 }), ctx()).find((x) => x.ruleId === 'high_risk_zone');
+    expect(somali?.severity).toBe('medium');
+  });
+
+  it('flags foreign vessels entering the 12 nm territorial sea, higher for fishing boats', () => {
+    const prev = vessel({ lat: 15, lon: 62 });
+    const merchant = evaluateVessel(vessel({ lat: 9.65, lon: 79.18, sog: 10 }), prev, ctx()).find((x) => x.ruleId === 'territorial_sea');
+    expect(merchant?.severity).toBe('medium');
+    const trawler = evaluateVessel(vessel({ lat: 9.65, lon: 79.18, sog: 6, category: 'fishing', flag: 'Sri Lanka' }), prev, ctx()).find((x) => x.ruleId === 'territorial_sea');
+    expect(trawler?.severity).toBe('high');
+    expect(rules(vessel({ lat: 9.65, lon: 79.18, flag: 'India' }), prev)).not.toContain('territorial_sea');
   });
 
   it('detects loitering from the trail', () => {
     const trail = Array.from({ length: 8 }, () => [15, 72] as [number, number]);
     expect(rules(vessel({ sog: 0.5, trail }), undefined)).toContain('loitering');
+    expect(rules(vessel({ sog: 0.5, trail, category: 'fishing' }), undefined)).not.toContain('loitering');
   });
 
   it('detects implausible position jumps', () => {
@@ -49,12 +62,12 @@ describe('risk rules', () => {
   });
 
   it('warns a fishing vessel approaching and crossing the boundary', () => {
-    const near = vessel({ category: 'fishing', flag: 'India', lat: 22.0, lon: 65.3 });
+    const near = vessel({ category: 'fishing', flag: 'India', lat: 22.0, lon: 67.05 });
     const far = vessel({ category: 'fishing', flag: 'India', lat: 20, lon: 70 });
     expect(rules(near, far)).toContain('fishing_boundary');
-    const crossed = vessel({ category: 'fishing', flag: 'India', lat: 22.0, lon: 63.5 });
+    const crossed = vessel({ category: 'fishing', flag: 'India', lat: 22.0, lon: 66.0 });
     const msg = evaluateVessel(crossed, near, ctx()).find((x) => x.ruleId === 'fishing_boundary');
-    expect(msg?.message).toMatch(/crossed/);
+    expect(msg?.message).toMatch(/crossed.*Pakistan/);
   });
 
   it('fires geofence rule on entry', () => {
@@ -107,7 +120,7 @@ describe('Hub', () => {
       hub.sweepGaps(sim.now);
     }
     const seen = new Set(hub.alerts.map((a) => a.ruleId));
-    for (const r of ['eez_entry', 'high_risk_zone', 'ais_gap', 'loitering', 'position_jump', 'fishing_boundary'] as const) {
+    for (const r of ['eez_entry', 'high_risk_zone', 'territorial_sea', 'ais_gap', 'loitering', 'position_jump', 'fishing_boundary'] as const) {
       expect(seen.has(r), `expected ${r} alert`).toBe(true);
     }
     expect(hub.snapshot().vessels.every((v) => v.trail.length === 0)).toBe(true);

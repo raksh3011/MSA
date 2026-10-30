@@ -1,49 +1,48 @@
-/** Boundary Safety — distance/side check against the (illustrative) fishing boundary. */
-import { distanceToLineNm, isValidCoord, type LatLon } from './geo';
-import { BOUNDARY_INDIA_SIDE_REFERENCE, FISHING_BOUNDARY } from './zones';
+/**
+ * Boundary Safety — how close is a position to the modelled maritime boundary, and is it already
+ * in a neighbour's waters? Offline-first: pure computation on bundled geometry.
+ */
+import { distanceToLineNm, isValidCoord } from './geo';
+import { ALL_BOUNDARY_LINES, CONTIGUOUS_ZONE, FOREIGN_WATERS, INDIA_EEZ, TERRITORIAL_SEA } from './zones';
 
 export type BoundaryLevel = 'safe' | 'caution' | 'danger' | 'crossed';
+export type WaterZone = 'territorial' | 'contiguous' | 'eez' | 'foreign' | 'high_seas';
 
 export interface BoundaryStatus {
   level: BoundaryLevel;
+  /** nautical miles to the nearest modelled boundary line */
   distanceNm: number;
-  /** true when the position is on the Indian side of the line */
+  /** true unless the position is inside a neighbouring state's modelled waters */
   indianSide: boolean;
+  zone: WaterZone;
+  /** name of the neighbouring state when level is "crossed" */
+  country?: string;
 }
 
-/** Signed side of the nearest boundary segment: >0 / <0 / 0. */
-function sideOfNearestSegment(lat: number, lon: number, line: readonly LatLon[]): number {
+export function classifyZone(lat: number, lon: number): { zone: WaterZone; country?: string } {
+  const foreign = FOREIGN_WATERS.find((f) => f.area.contains(lat, lon));
+  if (foreign) return { zone: 'foreign', country: foreign.name };
+  if (TERRITORIAL_SEA.contains(lat, lon)) return { zone: 'territorial' };
+  if (CONTIGUOUS_ZONE.contains(lat, lon)) return { zone: 'contiguous' };
+  if (INDIA_EEZ.contains(lat, lon)) return { zone: 'eez' };
+  return { zone: 'high_seas' };
+}
+
+export function nearestBoundaryNm(lat: number, lon: number): number {
   let best = Infinity;
-  let sign = 0;
-  const kLon = Math.cos((lat * Math.PI) / 180);
-  for (let i = 0; i < line.length - 1; i++) {
-    const a = line[i] as LatLon;
-    const b = line[i + 1] as LatLon;
-    const d = distanceToLineNm(lat, lon, [a, b]);
-    if (d < best) {
-      best = d;
-      const cross = (b[1] - a[1]) * kLon * (lat - a[0]) - (b[0] - a[0]) * (lon - a[1]) * kLon;
-      sign = Math.sign(cross);
-    }
-  }
-  return sign;
+  for (const line of ALL_BOUNDARY_LINES) best = Math.min(best, distanceToLineNm(lat, lon, line));
+  return best;
 }
 
-export function checkBoundary(
-  lat: number,
-  lon: number,
-  warnNm = 10,
-  line: readonly LatLon[] = FISHING_BOUNDARY,
-): BoundaryStatus | null {
+export function checkBoundary(lat: number, lon: number, warnNm = 10): BoundaryStatus | null {
   if (!isValidCoord(lat, lon)) return null;
-  const distanceNm = distanceToLineNm(lat, lon, line);
-  const refSide = sideOfNearestSegment(BOUNDARY_INDIA_SIDE_REFERENCE[0], BOUNDARY_INDIA_SIDE_REFERENCE[1], line);
-  const mySide = sideOfNearestSegment(lat, lon, line);
-  const indianSide = mySide === 0 || mySide === refSide;
+  const { zone, country } = classifyZone(lat, lon);
+  const distanceNm = Math.round(nearestBoundaryNm(lat, lon) * 10) / 10;
+  const indianSide = zone !== 'foreign';
   let level: BoundaryLevel;
   if (!indianSide) level = 'crossed';
   else if (distanceNm <= warnNm / 2) level = 'danger';
   else if (distanceNm <= warnNm) level = 'caution';
   else level = 'safe';
-  return { level, distanceNm: Math.round(distanceNm * 10) / 10, indianSide };
+  return { level, distanceNm, indianSide, zone, country };
 }

@@ -5,7 +5,7 @@
 import { checkBoundary } from './boundary';
 import { distanceNm, pointInPolygon } from './geo';
 import type { Alert, Geofence, Policy, RuleId, Severity, Vessel } from './types';
-import { EEZ_ZONES, HIGH_RISK_ZONES } from './zones';
+import { HIGH_RISK_ZONES, INDIA_EEZ, TERRITORIAL_SEA, type RiskLevel } from './zones';
 
 export const DEFAULT_POLICY: Policy = {
   flagsOfInterest: [],
@@ -23,11 +23,13 @@ export interface RuleContext {
 
 export type Finding = Pick<Alert, 'ruleId' | 'severity' | 'message'>;
 
-export const inEez = (v: Pick<Vessel, 'lat' | 'lon'>): boolean =>
-  EEZ_ZONES.some((z) => pointInPolygon(v.lat, v.lon, z.polygon));
+export const inEez = (v: Pick<Vessel, 'lat' | 'lon'>): boolean => INDIA_EEZ.contains(v.lat, v.lon);
+export const inTerritorialSea = (v: Pick<Vessel, 'lat' | 'lon'>): boolean => TERRITORIAL_SEA.contains(v.lat, v.lon);
 
-export const highRiskZoneOf = (v: Pick<Vessel, 'lat' | 'lon'>): string | null =>
-  HIGH_RISK_ZONES.find((z) => pointInPolygon(v.lat, v.lon, z.polygon))?.name ?? null;
+export const highRiskZoneOf = (v: Pick<Vessel, 'lat' | 'lon'>): { name: string; level: RiskLevel } | null => {
+  const z = HIGH_RISK_ZONES.find((r) => pointInPolygon(v.lat, v.lon, r.polygon));
+  return z ? { name: z.name, level: z.level } : null;
+};
 
 const isMilitary = (v: Vessel): boolean => v.category === 'naval' || v.category === 'coast_guard';
 const label = (v: Vessel): string => `${v.name} (${v.flag})`;
@@ -56,9 +58,25 @@ function highSpeed(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Findi
 
 function highRiskZone(v: Vessel, prev: Vessel | undefined): Finding | null {
   const zone = highRiskZoneOf(v);
-  if (!zone || (prev && highRiskZoneOf(prev))) return null;
+  if (!zone || (prev && highRiskZoneOf(prev)?.name === zone.name)) return null;
   if (isMilitary(v)) return null;
-  return { ruleId: 'high_risk_zone', severity: 'high', message: `${label(v)} entered ${zone}` };
+  return {
+    ruleId: 'high_risk_zone',
+    severity: zone.level === 'high' ? 'high' : 'medium',
+    message: `${label(v)} entered ${zone.name} (${zone.level === 'high' ? 'high-risk' : 'elevated-risk'} area)`,
+  };
+}
+
+/** Foreign merchant/fishing vessel inside the 12 nm territorial sea (innocent passage vs. illegal fishing). */
+function territorialSea(v: Vessel, prev: Vessel | undefined): Finding | null {
+  if (!inTerritorialSea(v) || (prev && inTerritorialSea(prev))) return null;
+  if (v.flag === 'India' || isMilitary(v)) return null;
+  const suspicious = v.category === 'fishing' || v.sog < 3;
+  return {
+    ruleId: 'territorial_sea',
+    severity: suspicious ? 'high' : 'medium',
+    message: `${label(v)} entered Indian territorial waters (12 nm) at ${v.sog.toFixed(1)} kn${v.category === 'fishing' ? ' - foreign fishing vessel' : ''}`,
+  };
 }
 
 function loitering(v: Vessel, _prev: Vessel | undefined, ctx: RuleContext): Finding | null {
@@ -94,7 +112,7 @@ function fishingBoundary(v: Vessel, prev: Vessel | undefined, ctx: RuleContext):
   const before = prev ? checkBoundary(prev.lat, prev.lon, ctx.policy.boundaryWarnNm) : null;
   if (before && before.level === now.level) return null;
   if (now.level === 'crossed') {
-    return { ruleId: 'fishing_boundary', severity: 'high', message: `${label(v)} crossed the maritime boundary` };
+    return { ruleId: 'fishing_boundary', severity: 'high', message: `${label(v)} crossed the maritime boundary into ${now.country ?? 'foreign'} waters (modelled)` };
   }
   return {
     ruleId: 'fishing_boundary',
@@ -115,7 +133,7 @@ function geofence(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Findin
 }
 
 type Rule = (v: Vessel, prev: Vessel | undefined, ctx: RuleContext) => Finding | null;
-export const RULES: readonly Rule[] = [eezEntry, highSpeed, highRiskZone, loitering, positionJump, fishingBoundary, geofence];
+export const RULES: readonly Rule[] = [eezEntry, highSpeed, highRiskZone, territorialSea, loitering, positionJump, fishingBoundary, geofence];
 
 export function evaluateVessel(v: Vessel, prev: Vessel | undefined, ctx: RuleContext): Finding[] {
   const out: Finding[] = [];
@@ -133,6 +151,7 @@ export function evaluateGaps(vessels: Iterable<Vessel>, ctx: RuleContext): Array
   for (const v of vessels) {
     const silent = ctx.now - v.lastSeen;
     if (silent < limit || silent > limit * 8) continue; // ignore very stale ghosts
+    if (v.sog < 3) continue; // moored / drifting vessels going quiet is normal, not "dark"
     const dark = inEez(v);
     out.push({
       vessel: v,
@@ -152,6 +171,7 @@ const COOLDOWN_MIN: Record<RuleId, number> = {
   high_speed_in_eez: 30,
   ais_gap: 90,
   high_risk_zone: 60,
+  territorial_sea: 30,
   loitering: 120,
   position_jump: 30,
   fishing_boundary: 15,

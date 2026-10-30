@@ -1,5 +1,5 @@
 /**
- * Hub — the platform-independent heart of NavSight: vessel state, risk engine,
+ * Hub — the platform-independent heart of ORVMS: vessel state, risk engine,
  * alert lifecycle, watchlists, geofences, audit trail. The Worker's Durable Object
  * and the in-browser demo both wrap exactly this class.
  */
@@ -9,6 +9,7 @@ import type {
   Alert,
   AlertStatus,
   AuditEntry,
+  DataSource,
   Geofence,
   Policy,
   PositionReport,
@@ -41,16 +42,25 @@ export class Hub {
   geofences: Geofence[] = [];
   audit: AuditEntry[] = [];
   policy: Policy = { ...DEFAULT_POLICY };
-  source: 'live' | 'demo' = 'demo';
+  source: DataSource = 'simulated';
   /** Called after any change to persistent state (alerts, users, watchlists, ...). */
   onPersist: (() => void) | undefined;
 
-  private readonly dedupe = new Deduper();
+  private dedupe = new Deduper();
 
   constructor(private readonly maxVessels = MAX_VESSELS) {}
 
   private ctx(now: number): RuleContext {
     return { policy: this.policy, geofences: this.geofences, now };
+  }
+
+  /** Switch data source: drops tracked vessels, alerts and de-duplication state (users/watchlists stay). */
+  resetFeed(source: DataSource): void {
+    this.source = source;
+    this.vessels.clear();
+    this.alerts = [];
+    this.dedupe = new Deduper();
+    this.persist();
   }
 
   /** Ingest one raw position report. Returns the stored vessel, or null if rejected. */

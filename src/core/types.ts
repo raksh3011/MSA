@@ -49,6 +49,7 @@ export type RuleId =
   | 'high_speed_in_eez'
   | 'ais_gap'
   | 'high_risk_zone'
+  | 'territorial_sea'
   | 'loitering'
   | 'position_jump'
   | 'fishing_boundary'
@@ -112,9 +113,12 @@ export interface Policy {
   boundaryWarnNm: number;
 }
 
+/** Where vessel positions come from. */
+export type DataSource = 'simulated' | 'aisstream' | 'digitraffic';
+
 export interface Snapshot {
   vessels: Vessel[];
   alerts: Alert[];
   ts: number;
-  source: 'live' | 'demo';
+  source: DataSource;
 }

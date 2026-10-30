@@ -40,8 +40,9 @@ describe('health and public endpoints', () => {
   });
 
   it('GET /api/public/zones exposes boundary data', async () => {
-    const body = (await (await call('/api/public/zones')).json()) as { boundary: unknown[] };
-    expect(body.boundary.length).toBeGreaterThan(1);
+    const body = (await (await call('/api/public/zones')).json()) as { boundaries: unknown[]; highRisk: unknown[] };
+    expect(body.boundaries.length).toBeGreaterThan(3);
+    expect(body.highRisk.length).toBeGreaterThan(0);
   });
 
   it('POST /api/public/boundary-check returns a level for valid input', async () => {

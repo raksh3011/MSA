@@ -1,63 +1,109 @@
 /**
- * Static maritime zones.
+ * Maritime zones.
  *
- * IMPORTANT: all coordinates are simplified and ILLUSTRATIVE. They are for
- * situational awareness and demonstration only and must never be used for
- * navigation, legal boundary determination or enforcement.
+ * Territorial sea / contiguous zone / EEZ and neighbouring-state waters are MODELLED from real
+ * coastlines (Natural Earth, public domain) using UNCLOS distances (12 / 24 / 200 nm) with
+ * equidistance lines where neighbouring coasts are closer — see scripts/build_zones.py.
+ * They are NOT the official gazetted limits. High-risk areas are indicative and based on
+ * public maritime-security advisories. Never use for navigation, enforcement or legal purposes.
  */
-import type { LatLon } from './geo';
+import { Area, type LatLon, type Poly } from './geo';
+import raw from './zones.data.json';
 
-export interface Zone {
-  id: string;
+interface RawNeighbour {
+  code: string;
   name: string;
-  kind: 'eez' | 'high_risk';
-  polygon: LatLon[];
+  eez: Poly[];
+}
+interface RawBoundary {
+  code: string;
+  name: string;
+  lines: LatLon[][];
+}
+interface RawZones {
+  meta: { source: string; method: string };
+  territorial: Poly[];
+  contiguous: Poly[];
+  eez: Poly[];
+  neighbours: RawNeighbour[];
+  boundaries: RawBoundary[];
 }
 
-/** Approximate outline of India's mainland EEZ (Arabian Sea + Bay of Bengal). */
-const INDIA_MAINLAND: LatLon[] = [
-  [23.5, 62.0], [23.5, 68.0], [23.5, 72.0], [23.0, 80.0], [22.5, 87.0], [22.0, 89.5],
-  [20.0, 89.0], [18.0, 88.5], [16.0, 88.0], [14.0, 87.5], [12.5, 87.0], [11.0, 86.5],
-  [10.0, 85.5], [9.0, 84.0], [8.0, 82.5], [7.0, 81.0], [6.0, 80.0], [5.0, 78.5],
-  [3.5, 77.0], [2.5, 75.5], [2.0, 74.0], [2.5, 72.5], [3.5, 71.0], [5.0, 69.5],
-  [6.5, 68.0], [7.5, 67.5], [9.0, 67.0], [11.0, 66.5], [13.0, 66.0], [15.0, 65.5],
-  [17.0, 65.0], [19.0, 64.0], [21.0, 63.0], [22.5, 62.5],
-];
+const data = raw as unknown as RawZones;
 
-/** Approximate outline of the Andaman & Nicobar EEZ. */
-const INDIA_ANDAMAN: LatLon[] = [
-  [14.0, 91.5], [14.0, 96.5], [13.0, 97.0], [12.0, 97.0], [11.0, 96.5], [10.0, 96.0],
-  [9.0, 95.5], [8.0, 95.0], [7.0, 94.5], [6.5, 93.5], [6.0, 92.5], [6.5, 91.5],
-  [7.5, 91.0], [9.0, 91.0], [11.0, 91.0], [13.0, 91.0],
-];
+export const ZONES_META = data.meta;
 
-export const EEZ_ZONES: Zone[] = [
-  { id: 'in-eez-main', name: 'India EEZ (mainland, approx.)', kind: 'eez', polygon: INDIA_MAINLAND },
-  { id: 'in-eez-andaman', name: 'India EEZ (Andaman & Nicobar, approx.)', kind: 'eez', polygon: INDIA_ANDAMAN },
-];
+/** Raw polygons (for drawing) and prepared areas (for fast containment). */
+export const TERRITORIAL_POLYS = data.territorial;
+export const CONTIGUOUS_POLYS = data.contiguous;
+export const EEZ_POLYS = data.eez;
 
-export const HIGH_RISK_ZONES: Zone[] = [
+export const TERRITORIAL_SEA = new Area(data.territorial);
+export const CONTIGUOUS_ZONE = new Area(data.contiguous);
+export const INDIA_EEZ = new Area(data.eez);
+
+export interface ForeignWaters {
+  code: string;
+  name: string;
+  polys: Poly[];
+  area: Area;
+}
+export const FOREIGN_WATERS: ForeignWaters[] = data.neighbours.map((n) => ({ code: n.code, name: n.name, polys: n.eez, area: new Area(n.eez) }));
+
+export interface BoundaryLine {
+  code: string;
+  name: string;
+  lines: LatLon[][];
+}
+export const BOUNDARIES: BoundaryLine[] = data.boundaries;
+export const ALL_BOUNDARY_LINES: LatLon[][] = BOUNDARIES.flatMap((b) => b.lines);
+
+export type RiskLevel = 'high' | 'elevated';
+
+export interface RiskZone {
+  id: string;
+  name: string;
+  level: RiskLevel;
+  polygon: LatLon[];
+  note: string;
+}
+
+const ADVISORY = 'Indicative area from public maritime-security advisories (BMP5 / UKMTO / IMB). Check current advisories.';
+
+export const HIGH_RISK_ZONES: RiskZone[] = [
   {
     id: 'hr-gulf-of-aden',
-    name: 'Gulf of Aden (high-risk area, approx.)',
-    kind: 'high_risk',
-    polygon: [[11.0, 43.0], [15.5, 43.0], [15.5, 53.0], [11.0, 53.0]],
+    name: 'Gulf of Aden',
+    level: 'high',
+    polygon: [[12.5, 43.2], [14.0, 46.5], [15.6, 52.2], [12.0, 52.0], [11.2, 49.0], [10.6, 45.0], [11.6, 43.2]],
+    note: ADVISORY,
+  },
+  {
+    id: 'hr-bab-el-mandeb',
+    name: 'Bab-el-Mandeb & southern Red Sea',
+    level: 'high',
+    polygon: [[12.2, 43.0], [12.8, 44.0], [16.0, 42.6], [16.0, 40.6], [13.4, 41.6]],
+    note: ADVISORY,
   },
   {
     id: 'hr-somali-basin',
-    name: 'Somali Basin (high-risk area, approx.)',
-    kind: 'high_risk',
-    polygon: [[-5.0, 45.0], [11.0, 45.0], [11.0, 60.0], [-5.0, 60.0]],
+    name: 'Somali Basin',
+    level: 'elevated',
+    polygon: [[11.0, 51.5], [11.0, 62.0], [-6.0, 62.0], [-6.0, 41.0], [2.0, 41.2], [8.0, 49.5]],
+    note: ADVISORY,
+  },
+  {
+    id: 'hr-hormuz',
+    name: 'Strait of Hormuz approaches',
+    level: 'elevated',
+    polygon: [[25.3, 55.6], [26.8, 56.9], [26.9, 57.8], [24.9, 58.0], [24.6, 56.4]],
+    note: 'Dense traffic and regional tension. Indicative area.',
+  },
+  {
+    id: 'hr-malacca',
+    name: 'Malacca & Singapore Straits',
+    level: 'elevated',
+    polygon: [[5.8, 98.6], [4.5, 99.6], [2.2, 102.2], [1.0, 103.9], [1.4, 104.5], [3.0, 101.6], [5.2, 98.2]],
+    note: 'Dense traffic and opportunistic piracy / armed robbery. Indicative area.',
   },
 ];
-
-/**
- * Illustrative India–Pakistan maritime boundary line (Sir Creek towards the
- * open Arabian Sea). Used by the Boundary Safety feature for fishermen.
- */
-export const FISHING_BOUNDARY: LatLon[] = [
-  [23.95, 68.15], [23.5, 67.4], [22.9, 66.5], [22.0, 65.2], [21.0, 63.8],
-];
-
-/** Side of the boundary that counts as "India" for the crossing check. */
-export const BOUNDARY_INDIA_SIDE_REFERENCE: LatLon = [21.5, 69.5];

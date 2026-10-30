@@ -3,7 +3,7 @@ import tseslint from 'typescript-eslint';
 import security from 'eslint-plugin-security';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '.wrangler/**'] },
+  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '.wrangler/**', 'scripts/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   security.configs.recommended,

@@ -4,7 +4,7 @@
  */
 import type { Env } from './hub-do';
 
-export { NavSightHub } from './hub-do';
+export { OrvmsHub } from './hub-do';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

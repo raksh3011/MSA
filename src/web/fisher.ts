@@ -14,8 +14,18 @@ import { LANGS, t, type Lang } from './i18n';
 const LEVEL_ICON: Record<BoundaryStatus['level'], string> = { safe: '✔', caution: '⚠', danger: '⚠', crossed: '✖' };
 const NM_TO_KM = 1.852;
 
+function zoneTextFor(lang: Lang, s: BoundaryStatus): string {
+  switch (s.zone) {
+    case 'territorial': return t(lang, 'zTerritorial');
+    case 'contiguous': return t(lang, 'zContiguous');
+    case 'eez': return t(lang, 'zEez');
+    case 'foreign': return t(lang, 'zForeign').replace('{country}', s.country ?? '');
+    default: return t(lang, 'zHighSeas');
+  }
+}
+
 export function mountFisher(root: HTMLElement, onBack: () => void): void {
-  let lang: Lang = (['en', 'hi', 'gu'] as const).find((l) => l === localStorage.getItem('ns_lang')) ?? 'en';
+  let lang: Lang = (['en', 'hi', 'gu'] as const).find((l) => l === localStorage.getItem('orvms_lang')) ?? 'en';
   let status: BoundaryStatus | null = null;
   let message = '';
   let updatedAt = 0;
@@ -26,7 +36,7 @@ export function mountFisher(root: HTMLElement, onBack: () => void): void {
   const setLang = (l: Lang): void => {
     lang = l;
     try {
-      localStorage.setItem('ns_lang', l);
+      localStorage.setItem('orvms_lang', l);
     } catch {
       /* storage unavailable */
     }
@@ -87,6 +97,7 @@ export function mountFisher(root: HTMLElement, onBack: () => void): void {
             h('strong', {}, `${status.distanceNm} nm`),
             ` (${(status.distanceNm * NM_TO_KM).toFixed(1)} km)`,
           ),
+          h('div', { class: 'fisher-zone' }, `${t(lang, 'youAreIn')}: ${zoneTextFor(lang, status)}`),
           h('div', { class: 'muted' }, `${t(lang, 'updated')}: ${new Date(updatedAt).toLocaleTimeString()}`),
         )
       : null;

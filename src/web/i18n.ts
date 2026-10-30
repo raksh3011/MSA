@@ -7,7 +7,8 @@ export type Lang = 'en' | 'hi' | 'gu';
 type Key =
   | 'title' | 'subtitle' | 'useLocation' | 'manual' | 'lat' | 'lon' | 'check'
   | 'safe' | 'caution' | 'danger' | 'crossed' | 'distance' | 'disclaimer'
-  | 'locating' | 'denied' | 'unsupported' | 'invalid' | 'back' | 'updated';
+  | 'locating' | 'denied' | 'unsupported' | 'invalid' | 'back' | 'updated'
+  | 'zTerritorial' | 'zContiguous' | 'zEez' | 'zHighSeas' | 'zForeign' | 'youAreIn';
 
 const STR: Record<Lang, Record<Key, string>> = {
   en: {
@@ -30,6 +31,12 @@ const STR: Record<Lang, Record<Key, string>> = {
     invalid: 'Enter a valid latitude (-90 to 90) and longitude (-180 to 180).',
     back: 'Back',
     updated: 'Last updated',
+    zTerritorial: 'Indian territorial waters (0-12 nm)',
+    zContiguous: 'Indian contiguous zone (12-24 nm)',
+    zEez: 'Indian Exclusive Economic Zone',
+    zHighSeas: 'Open sea',
+    zForeign: '{country} waters (modelled)',
+    youAreIn: 'You are in',
   },
   hi: {
     title: 'सीमा सुरक्षा जाँच',
@@ -51,6 +58,12 @@ const STR: Record<Lang, Record<Key, string>> = {
     invalid: 'सही अक्षांश (-90 से 90) और देशांतर (-180 से 180) दर्ज करें।',
     back: 'वापस',
     updated: 'अंतिम अपडेट',
+    zTerritorial: 'भारतीय प्रादेशिक जल (0-12 समुद्री मील)',
+    zContiguous: 'भारतीय संलग्न क्षेत्र (12-24 समुद्री मील)',
+    zEez: 'भारत का विशेष आर्थिक क्षेत्र',
+    zHighSeas: 'खुला समुद्र',
+    zForeign: '{country} का जलक्षेत्र (अनुमानित)',
+    youAreIn: 'आप हैं',
   },
   gu: {
     title: 'સીમા સુરક્ષા તપાસ',
@@ -72,6 +85,12 @@ const STR: Record<Lang, Record<Key, string>> = {
     invalid: 'માન્ય અક્ષાંશ (-90 થી 90) અને રેખાંશ (-180 થી 180) દાખલ કરો.',
     back: 'પાછા',
     updated: 'છેલ્લે અપડેટ',
+    zTerritorial: 'ભારતીય પ્રાદેશિક જળ (0-12 નોટિકલ માઇલ)',
+    zContiguous: 'ભારતીય સંલગ્ન ક્ષેત્ર (12-24 નોટિકલ માઇલ)',
+    zEez: 'ભારતનો વિશિષ્ટ આર્થિક ક્ષેત્ર',
+    zHighSeas: 'ખુલ્લો સમુદ્ર',
+    zForeign: '{country} નું જળક્ષેત્ર (અંદાજિત)',
+    youAreIn: 'તમે છો',
   },
 };
 

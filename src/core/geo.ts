@@ -73,3 +73,47 @@ export function destination(p: LatLon, bearing: number, nm: number): LatLon {
     Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
   return [(lat2 * 180) / Math.PI, (((lon2 * 180) / Math.PI + 540) % 360) - 180];
 }
+
+export type Ring = LatLon[];
+/** Exterior ring first, then holes. */
+export type Poly = Ring[];
+
+/** Point-in-polygon with holes. */
+export function pointInPoly(lat: number, lon: number, poly: Poly): boolean {
+  const [outer, ...holes] = poly;
+  if (!outer || !pointInPolygon(lat, lon, outer)) return false;
+  return !holes.some((h) => pointInPolygon(lat, lon, h));
+}
+
+interface BBox {
+  latMin: number;
+  latMax: number;
+  lonMin: number;
+  lonMax: number;
+}
+
+/** A multi-polygon with cached bounding boxes so containment checks stay cheap per AIS report. */
+export class Area {
+  private readonly boxes: BBox[];
+
+  constructor(readonly polys: readonly Poly[]) {
+    this.boxes = polys.map((p) => {
+      const ring = p[0] ?? [];
+      return {
+        latMin: Math.min(...ring.map((c) => c[0])),
+        latMax: Math.max(...ring.map((c) => c[0])),
+        lonMin: Math.min(...ring.map((c) => c[1])),
+        lonMax: Math.max(...ring.map((c) => c[1])),
+      };
+    });
+  }
+
+  contains(lat: number, lon: number): boolean {
+    for (let i = 0; i < this.polys.length; i++) {
+      const b = this.boxes[i] as BBox;
+      if (lat < b.latMin || lat > b.latMax || lon < b.lonMin || lon > b.lonMax) continue;
+      if (pointInPoly(lat, lon, this.polys[i] as Poly)) return true;
+    }
+    return false;
+  }
+}
