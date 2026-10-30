@@ -514,20 +514,20 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   }
 
   function pushToMap(): void {
-    if (data) mapView.showVessels(data.vessels, alertSeverityMap(), selected, watch);
+    if (data) mapView.showVessels(data.vessels, alertSeverityMap(), selected, watch, data.ts);
     mapView.showGeofences(geofences);
   }
 
   // ── data plumbing ───────────────────────────────────────────────────────────
   function onData(d: FeedData): void {
     const firstOfSource = lastSource !== d.source;
+    data = d;
     if (firstOfSource) {
       lastSource = d.source;
       const v = SOURCE_VIEW[d.source];
       mapView.map.setView(v.center, v.zoom);
       renderSource();
     }
-    data = d;
     for (const v of d.vessels) {
       const t = trails.get(v.mmsi) ?? [];
       const last = t[t.length - 1];

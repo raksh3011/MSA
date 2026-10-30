@@ -7,13 +7,13 @@
  */
 import { DurableObject } from 'cloudflare:workers';
 import { createApp } from '../api/app';
-import { verifyToken } from '../core/auth';
+import { verifyPassword, verifyToken } from '../core/auth';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
 import { Simulator } from '../core/simulator';
 import type { DataSource, PositionReport, Role } from '../core/types';
 import { parseAisMessage } from './ais';
-import { boxesFor, minGapMs, parseRegion } from './regions';
+import { boxesFor, inBox, INDIA_BOX, minGapMs, parseRegion } from './regions';
 
 export interface Env {
   HUB: DurableObjectNamespace;
@@ -54,10 +54,13 @@ export class OrvmsHub extends DurableObject<Env> {
       allowedOrigins: (env.ALLOWED_ORIGINS ?? '*').split(',').map((s) => s.trim()),
     });
     this.hub.source = OrvmsHub.pickSource(env);
+    this.hub.focus = (v) => inBox(v.lat, v.lon, INDIA_BOX);
     void ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<ReturnType<Hub['exportState']>>('state');
       if (saved) this.hub.importState(saved);
-      if (this.hub.users.size === 0) await this.seedUsers();
+      // Seed on first run, and re-seed when the SEED_PASSWORD secret has been rotated.
+      const admin = this.hub.users.get('admin');
+      if (!admin || (this.env.SEED_PASSWORD && !(await verifyPassword(this.env.SEED_PASSWORD, admin.passwordHash)))) await this.seedUsers();
       this.hub.onPersist = () => this.scheduleSave();
     });
   }
@@ -205,7 +208,13 @@ export class OrvmsHub extends DurableObject<Env> {
           FilterMessageTypes: ['PositionReport', 'ShipStaticData'],
         }),
       );
-      ws.addEventListener('message', (e) => this.onUpstream(e.data));
+      // aisstream.io sends BINARY frames (JSON bytes), so decode ArrayBuffer/Blob as well as text.
+      ws.addEventListener('message', (e) => {
+        const d: unknown = e.data;
+        if (typeof d === 'string') this.onUpstream(d);
+        else if (d instanceof ArrayBuffer) this.onUpstream(new TextDecoder().decode(d));
+        else if (typeof Blob !== 'undefined' && d instanceof Blob) void d.text().then((t) => this.onUpstream(t));
+      });
       ws.addEventListener('close', () => {
         this.upstream = undefined;
         this.hub.feed = { ...this.hub.feed, connected: false };
@@ -220,8 +229,7 @@ export class OrvmsHub extends DurableObject<Env> {
     }
   }
 
-  private onUpstream(data: unknown): void {
-    if (typeof data !== 'string') return;
+  private onUpstream(data: string): void {
     const f = this.hub.feed;
     this.hub.feed = { ...f, connected: true, lastMessageAt: Date.now(), messages: (f.messages ?? 0) + 1, error: undefined };
     if (data.startsWith('{"error"')) {

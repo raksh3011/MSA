@@ -34,3 +34,24 @@ describe('feed health', () => {
     expect(hub.snapshot().feed).toEqual({ connected: true });
   });
 });
+
+describe('sparse live coverage handling', () => {
+  it('evicts vessels outside the focus area first', () => {
+    const hub = new Hub(2);
+    hub.focus = (v) => v.lat < 30; // "India-like" focus
+    hub.ingest({ mmsi: '419000001', lat: 10, lon: 75, ts: 1000 }); // focus, oldest
+    hub.ingest({ mmsi: '244000002', lat: 52, lon: 4, ts: 5000 }); // outside
+    hub.ingest({ mmsi: '244000003', lat: 53, lon: 5, ts: 6000 }); // outside, forces eviction
+    expect(hub.vessels.has('419000001')).toBe(true);
+    expect(hub.vessels.has('244000002')).toBe(false);
+  });
+
+  it('does not raise AIS-gap alerts for terrestrial aisstream data', () => {
+    const hub = new Hub();
+    hub.source = 'aisstream';
+    hub.ingest({ mmsi: '636000001', lat: 15, lon: 72, sog: 12, ts: 0 }, 0);
+    expect(hub.sweepGaps(40 * 60_000)).toBe(0);
+    hub.source = 'simulated';
+    expect(hub.sweepGaps(40 * 60_000)).toBeGreaterThan(0);
+  });
+});

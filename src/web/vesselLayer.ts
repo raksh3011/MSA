@@ -29,6 +29,7 @@ export class VesselLayer extends L.Layer {
   private showTrails = false;
   private showLabels = true;
   private raf = 0;
+  private now = Date.now();
 
   constructor(private readonly opts: VesselLayerOptions) {
     super();
@@ -74,6 +75,7 @@ export class VesselLayer extends L.Layer {
     trails?: ReadonlyMap<string, ReadonlyArray<[number, number]>>;
     showTrails?: boolean;
     showLabels?: boolean;
+    now?: number;
   }): void {
     if (data.vessels) this.vessels = data.vessels;
     if (data.alertSeverity) this.alertSeverity = data.alertSeverity;
@@ -83,6 +85,7 @@ export class VesselLayer extends L.Layer {
     if (data.trails) this.trails = data.trails;
     if (data.showTrails !== undefined) this.showTrails = data.showTrails;
     if (data.showLabels !== undefined) this.showLabels = data.showLabels;
+    if (data.now !== undefined) this.now = data.now;
     this.schedule();
   }
 
@@ -153,6 +156,9 @@ export class VesselLayer extends L.Layer {
       const isWatched = this.watched.has(v.mmsi);
       const color = CATEGORY_COLOR[v.category];
       const r = (isSel ? 7 : 5.5) * scale;
+      // Fade vessels that have not reported recently (sparse coverage): <30 min full, <6 h dimmed, older faint.
+      const age = this.now - v.lastSeen;
+      ctx.globalAlpha = isSel || sev ? 1 : age < 30 * 60_000 ? 1 : age < 6 * 3600_000 ? 0.6 : 0.35;
 
       if (sev) {
         ctx.beginPath();
@@ -210,6 +216,7 @@ export class VesselLayer extends L.Layer {
         ctx.strokeText(v.name, pt.x + r + 6, pt.y + 4);
         ctx.fillText(v.name, pt.x + r + 6, pt.y + 4);
       }
+      ctx.globalAlpha = 1;
     }
   }
 

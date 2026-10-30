@@ -32,6 +32,8 @@ Sign in as `admin` / `analyst` / `operator` with the password printed by `live:s
 * `indian-ocean` — lat -40…32, lon 20…125;
 * `world` — everything. Reports near India are kept at full rate (one per vessel per 10 s); the rest of the world is thinned to one per minute, and the server keeps the 6,000 most recently seen vessels. `world` is heavy for the Cloudflare *free* tier — fine locally, use `india` when deployed free.
 
+**Coverage near India is sparse — know this before you present it.** aisstream.io is built from volunteer shore receivers. Measured with a real key over 40 s: ~2,200 position reports worldwide but only ~3 inside the India box. Vessels near ports (e.g. Chennai) and busy lanes appear; open ocean mostly does not. So: vessels are kept in memory and fade in the UI as they age (30 min / 6 h); vessels inside the India area are evicted last; and the AIS-gap ("dark vessel") rule is switched off for aisstream data, because silence there means "out of receiver range", not "transponder off". Satellite-AIS (paid) is the real fix for open-ocean India coverage.
+
 The UI shows feed health in the header (a bad key or dropped connection reads "Feed problem: …" instead of silently showing an empty sea) and has jump buttons (India EEZ, Arabian Sea, Bay of Bengal, Palk Strait, Gulf of Aden, Malacca, World). The relay path is covered by a local mock (`node scripts/mock-aisstream.mjs`, then run the Worker with `AISSTREAM_URL=http://localhost:9911` and `AISSTREAM_API_KEY=testkey`); it has not been run against the real service because that needs your key.
 
 ## Zones and boundaries (modelled)

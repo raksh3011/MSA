@@ -47,6 +47,8 @@ export class Hub {
   feed: FeedInfo = { connected: true };
   /** Called after any change to persistent state (alerts, users, watchlists, ...). */
   onPersist: (() => void) | undefined;
+  /** Vessels matching this predicate are evicted last when the store is full (e.g. the area of interest). */
+  focus: ((v: Vessel) => boolean) | undefined;
 
   private dedupe = new Deduper();
 
@@ -86,6 +88,8 @@ export class Hub {
 
   /** Periodic AIS-gap sweep. */
   sweepGaps(now: number = Date.now()): number {
+    // Terrestrial AIS (aisstream) has patchy coverage: silence usually means "out of receiver range", not "dark".
+    if (this.source === 'aisstream') return 0;
     let n = 0;
     for (const { vessel, finding } of evaluateGaps(this.vessels.values(), this.ctx(now))) {
       if (this.raise(vessel, finding, now)) n++;
@@ -94,15 +98,23 @@ export class Hub {
   }
 
   private evictStalest(): void {
+    // Prefer evicting the stalest vessel OUTSIDE the focus area, so sparse reports near the area of interest survive.
     let oldest: string | undefined;
     let t = Infinity;
+    let oldestAny: string | undefined;
+    let tAny = Infinity;
     for (const [mmsi, v] of this.vessels) {
-      if (v.lastSeen < t) {
+      if (v.lastSeen < tAny) {
+        tAny = v.lastSeen;
+        oldestAny = mmsi;
+      }
+      if (!this.focus?.(v) && v.lastSeen < t) {
         t = v.lastSeen;
         oldest = mmsi;
       }
     }
-    if (oldest) this.vessels.delete(oldest);
+    const victim = oldest ?? oldestAny;
+    if (victim) this.vessels.delete(victim);
   }
 
   private raise(v: Vessel, f: Finding, now: number): Alert | null {

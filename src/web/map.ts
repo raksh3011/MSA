@@ -128,8 +128,8 @@ export class MapView {
     else g.remove();
   }
 
-  showVessels(vessels: readonly Vessel[], alertSeverity: ReadonlyMap<string, Severity>, selected: string | null, watched: ReadonlySet<string>): void {
-    this.vessels.set({ vessels, alertSeverity, selected, watched });
+  showVessels(vessels: readonly Vessel[], alertSeverity: ReadonlyMap<string, Severity>, selected: string | null, watched: ReadonlySet<string>, now: number): void {
+    this.vessels.set({ vessels, alertSeverity, selected, watched, now });
   }
 
   setHidden(hidden: ReadonlySet<VesselCategory>): void {

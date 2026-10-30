@@ -9,3 +9,4 @@ coverage/
 *.pyc
 __pycache__/
 reports/*.tmp
+*.log

@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
 
-const [key, region = 'india'] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const [key, region = 'world'] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const force = process.argv.includes('--force');
 
 if (!key || key.length < 16) {
