@@ -10,6 +10,7 @@ import type {
   AlertStatus,
   AuditEntry,
   DataSource,
+  FeedInfo,
   Geofence,
   Policy,
   PositionReport,
@@ -43,6 +44,7 @@ export class Hub {
   audit: AuditEntry[] = [];
   policy: Policy = { ...DEFAULT_POLICY };
   source: DataSource = 'simulated';
+  feed: FeedInfo = { connected: true };
   /** Called after any change to persistent state (alerts, users, watchlists, ...). */
   onPersist: (() => void) | undefined;
 
@@ -57,6 +59,7 @@ export class Hub {
   /** Switch data source: drops tracked vessels, alerts and de-duplication state (users/watchlists stay). */
   resetFeed(source: DataSource): void {
     this.source = source;
+    this.feed = { connected: true };
     this.vessels.clear();
     this.alerts = [];
     this.dedupe = new Deduper();
@@ -197,7 +200,7 @@ export class Hub {
   snapshot(now: number = Date.now()): Snapshot {
     // Trails are omitted from bulk snapshots (bandwidth); clients build their own or fetch /api/vessels/:mmsi.
     const vessels = [...this.vessels.values()].map((v) => ({ ...v, trail: [] }));
-    return { vessels, alerts: this.alerts.slice(0, 100), ts: now, source: this.source };
+    return { vessels, alerts: this.alerts.slice(0, 100), ts: now, source: this.source, feed: this.feed };
   }
 
   /** Apply AIS static data (name / ship type) to an already-tracked vessel. */

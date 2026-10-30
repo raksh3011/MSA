@@ -13,6 +13,7 @@ import { Hub } from '../core/hub';
 import { Simulator } from '../core/simulator';
 import type { DataSource, PositionReport, Role } from '../core/types';
 import { parseAisMessage } from './ais';
+import { boxesFor, minGapMs, parseRegion } from './regions';
 
 export interface Env {
   HUB: DurableObjectNamespace;
@@ -20,14 +21,16 @@ export interface Env {
   AISSTREAM_API_KEY?: string;
   /** 'aisstream' | 'digitraffic' | 'simulated'. Default: aisstream when a key is set, otherwise simulated. */
   DATA_SOURCE?: string;
+  /** aisstream coverage: 'india' (India + chokepoints, default) | 'indian-ocean' | 'world' */
+  AIS_REGION?: string;
+  /** override the upstream endpoint (testing only) */
+  AISSTREAM_URL?: string;
   SEED_PASSWORD?: string;
   ALLOWED_ORIGINS?: string;
 }
 
 const BROADCAST_MS = 5000;
 const IDLE_STOP_MS = 3 * 60_000;
-const MIN_REPORT_GAP_MS = 10_000; // per-MMSI throttle: keeps CPU and bandwidth inside free-tier limits
-const AIS_BBOX = [[-10, 44], [30, 100]]; // Indian Ocean region of interest
 const MAX_STATIC = 20_000;
 
 export class OrvmsHub extends DurableObject<Env> {
@@ -170,9 +173,15 @@ export class OrvmsHub extends DurableObject<Env> {
   private async pollDigitraffic(): Promise<void> {
     try {
       const now = Date.now();
-      for (const r of await this.digitraffic.poll(now)) this.hub.ingest(r, now);
+      let n = 0;
+      for (const r of await this.digitraffic.poll(now)) {
+        this.hub.ingest(r, now);
+        n++;
+      }
+      this.hub.feed = { connected: true, lastMessageAt: now, messages: (this.hub.feed.messages ?? 0) + n, region: 'baltic' };
     } catch (err) {
       console.error('Digitraffic poll failed', err);
+      this.hub.feed = { ...this.hub.feed, connected: false, error: 'Digitraffic unavailable' };
     }
   }
 
@@ -183,33 +192,49 @@ export class OrvmsHub extends DurableObject<Env> {
 
   private async connectUpstream(): Promise<void> {
     try {
-      const resp = await fetch('https://stream.aisstream.io/v0/stream', { headers: { Upgrade: 'websocket' } });
+      const resp = await fetch(this.env.AISSTREAM_URL ?? 'https://stream.aisstream.io/v0/stream', { headers: { Upgrade: 'websocket' } });
       const ws = resp.webSocket;
       if (!ws) throw new Error('upstream refused websocket upgrade');
       ws.accept();
       this.upstream = ws;
+      this.hub.feed = { connected: true, region: parseRegion(this.env.AIS_REGION), messages: 0 };
       ws.send(
         JSON.stringify({
           APIKey: this.env.AISSTREAM_API_KEY,
-          BoundingBoxes: [AIS_BBOX],
+          BoundingBoxes: boxesFor(parseRegion(this.env.AIS_REGION)),
           FilterMessageTypes: ['PositionReport', 'ShipStaticData'],
         }),
       );
       ws.addEventListener('message', (e) => this.onUpstream(e.data));
       ws.addEventListener('close', () => {
         this.upstream = undefined;
-        if (this.tickTimer) setTimeout(() => void this.connectUpstream(), 5000); // simple reconnect
+        this.hub.feed = { ...this.hub.feed, connected: false };
+        if (this.tickTimer) setTimeout(() => void this.connectUpstream(), this.hub.feed.error ? 60_000 : 5000); // simple reconnect
       });
       ws.addEventListener('error', () => ws.close());
     } catch (err) {
       console.error('AIS upstream connect failed', err);
       this.upstream = undefined;
+      this.hub.feed = { ...this.hub.feed, connected: false, error: 'Cannot reach aisstream.io' };
       if (this.tickTimer) setTimeout(() => void this.connectUpstream(), 15_000);
     }
   }
 
   private onUpstream(data: unknown): void {
     if (typeof data !== 'string') return;
+    const f = this.hub.feed;
+    this.hub.feed = { ...f, connected: true, lastMessageAt: Date.now(), messages: (f.messages ?? 0) + 1, error: undefined };
+    if (data.startsWith('{"error"')) {
+      // e.g. {"error":"Api Key Is Not Valid"}: surface it instead of silently showing an empty sea
+      let message = 'aisstream.io rejected the subscription';
+      try {
+        message = String((JSON.parse(data) as { error?: unknown }).error ?? message);
+      } catch {
+        /* keep default */
+      }
+      this.hub.feed = { ...this.hub.feed, connected: false, error: message };
+      return;
+    }
     const parsed = parseAisMessage(data);
     if (!parsed) return;
     if (parsed.kind === 'static') {
@@ -220,7 +245,7 @@ export class OrvmsHub extends DurableObject<Env> {
     }
     const now = Date.now();
     const last = this.lastAccepted.get(parsed.report.mmsi) ?? 0;
-    if (now - last < MIN_REPORT_GAP_MS) return;
+    if (now - last < minGapMs(parsed.report.lat, parsed.report.lon)) return;
     this.lastAccepted.set(parsed.report.mmsi, now);
     if (this.lastAccepted.size > 50_000) this.lastAccepted.clear();
     const st = this.statics.get(parsed.report.mmsi);

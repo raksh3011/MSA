@@ -73,7 +73,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   // ── public ─────────────────────────────────────────────────────────────────
   app.get('/api/health', (c) =>
-    c.json({ status: 'ok', source: hub.source, vessels: hub.vessels.size, alerts: hub.alerts.length, ts: now() }),
+    c.json({ status: 'ok', source: hub.source, feed: hub.feed, vessels: hub.vessels.size, alerts: hub.alerts.length, ts: now() }),
   );
 
   app.get('/api/public/zones', (c) =>
@@ -129,7 +129,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   // ── vessels ────────────────────────────────────────────────────────────────
   app.get('/api/vessels', requireAuth(), (c) => {
     const snap = hub.snapshot(now());
-    return c.json({ vessels: snap.vessels, total: snap.vessels.length, ts: snap.ts, source: snap.source });
+    return c.json({ vessels: snap.vessels, total: snap.vessels.length, ts: snap.ts, source: snap.source, feed: snap.feed });
   });
 
   app.get('/api/vessels/:mmsi', requireAuth(), (c) => {

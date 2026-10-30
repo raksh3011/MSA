@@ -116,9 +116,21 @@ export interface Policy {
 /** Where vessel positions come from. */
 export type DataSource = 'simulated' | 'aisstream' | 'digitraffic';
 
+/** Health of the upstream AIS feed, surfaced to the UI so a bad key or dropped connection is visible. */
+export interface FeedInfo {
+  connected: boolean;
+  /** epoch ms of the last message received from the upstream feed */
+  lastMessageAt?: number;
+  error?: string;
+  /** coverage preset, e.g. india | indian-ocean | world */
+  region?: string;
+  messages?: number;
+}
+
 export interface Snapshot {
   vessels: Vessel[];
   alerts: Alert[];
   ts: number;
   source: DataSource;
+  feed?: FeedInfo;
 }

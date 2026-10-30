@@ -11,15 +11,28 @@ Serverless, TypeScript end to end, and **free to host** (no always-on backend se
 
 > **Data limits.** Public AIS only shows vessels that transmit it. Small fishing boats and vessels that switch AIS off are often invisible and AIS positions can be wrong or spoofed. Zones and boundaries are **modelled** (see below), not the official gazetted limits. ORVMS is decision support, not a navigation or legal-boundary tool.
 
-## Real-time data — what is live, and what needs a key
+## Real-time data — worldwide, focused on India
 
 | Source | Coverage | Needs | Where |
 |---|---|---|---|
-| **Digitraffic Marine** (Fintraffic, CC BY 4.0) | **Real, live AIS — Baltic Sea (~600–1000 vessels)** | Nothing (no key, no signup) | Browser demo (data-source menu) **and** Worker (`DATA_SOURCE=digitraffic`) |
-| **aisstream.io** | Global AIS incl. the **Indian Ocean** | Free API key (https://aisstream.io, GitHub sign-in) | Worker (`wrangler secret put AISSTREAM_API_KEY`, `DATA_SOURCE=aisstream`) |
-| Built-in simulator | Indian Ocean scenarios (dark vessel, spoofing, boundary crossings…) | Nothing | Browser demo and Worker (`DATA_SOURCE=simulated`) |
+| **aisstream.io** | **Global AIS**, including every vessel near India's EEZ | Free API key (https://aisstream.io → sign in with GitHub → API Keys) | Server only (Worker / `npm run live`) — aisstream does not allow browser connections |
+| **Digitraffic Marine** (Fintraffic, CC BY 4.0) | Real live AIS, Baltic Sea (~650 vessels) | Nothing | Browser demo (data-source menu) **and** Worker |
+| Built-in simulator | Indian Ocean scenarios (dark vessel, spoofing, boundary crossings…) | Nothing | Browser demo and Worker |
 
-There is no free keyless AIS feed covering Indian waters, so for live Indian-Ocean vessels you need the (free) aisstream key. The simulator exists so every alert scenario can be demonstrated on demand.
+No free feed covers Indian waters without a key, so global/Indian live data needs the free aisstream key. Fastest way to see it (about 2 minutes, no Cloudflare account):
+
+```bash
+npm run live:setup -- <YOUR_AISSTREAM_KEY> india     # writes .dev.vars (git-ignored); region: india | indian-ocean | world
+npm run live                                         # builds the UI and starts the relay + app on http://localhost:8787
+```
+Sign in as `admin` / `analyst` / `operator` with the password printed by `live:setup`.
+
+**Coverage presets (`AIS_REGION`):**
+* `india` (default) — India's whole EEZ area (lat -2…28, lon 58…102) **plus** the Red Sea / Gulf of Aden / Arabian Gulf / Hormuz and the Malacca & Singapore Straits;
+* `indian-ocean` — lat -40…32, lon 20…125;
+* `world` — everything. Reports near India are kept at full rate (one per vessel per 10 s); the rest of the world is thinned to one per minute, and the server keeps the 6,000 most recently seen vessels. `world` is heavy for the Cloudflare *free* tier — fine locally, use `india` when deployed free.
+
+The UI shows feed health in the header (a bad key or dropped connection reads "Feed problem: …" instead of silently showing an empty sea) and has jump buttons (India EEZ, Arabian Sea, Bay of Bengal, Palk Strait, Gulf of Aden, Malacca, World). The relay path is covered by a local mock (`node scripts/mock-aisstream.mjs`, then run the Worker with `AISSTREAM_URL=http://localhost:9911` and `AISSTREAM_API_KEY=testkey`); it has not been run against the real service because that needs your key.
 
 ## Zones and boundaries (modelled)
 
@@ -49,6 +62,8 @@ Output is committed as `src/core/zones.data.json` (the app never needs Python at
 Layers: `core/` (pure domain logic, runs anywhere) → `api/` (Hono REST app, platform-neutral) → `worker/` (Cloudflare adapter) and `web/` (UI).
 
 ## Quick start
+
+(For live vessels see "Real-time data" above.)
 
 ```bash
 npm install

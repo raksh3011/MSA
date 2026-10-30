@@ -21,8 +21,18 @@ const SOURCE_LABEL: Record<DataSource, string> = {
 const SOURCE_VIEW: Record<DataSource, { center: [number, number]; zoom: number }> = {
   simulated: { center: [14, 74], zoom: 4 },
   digitraffic: { center: [60.0, 23.5], zoom: 6 },
-  aisstream: { center: [14, 74], zoom: 4 },
+  aisstream: { center: [14, 78], zoom: 4 },
 };
+
+const REGIONS: Array<{ label: string; center: [number, number]; zoom: number }> = [
+  { label: 'India EEZ', center: [13, 80], zoom: 4 },
+  { label: 'Arabian Sea', center: [16, 66], zoom: 5 },
+  { label: 'Bay of Bengal', center: [14, 87], zoom: 5 },
+  { label: 'Palk Strait', center: [9.5, 79.4], zoom: 8 },
+  { label: 'Gulf of Aden', center: [12.5, 48], zoom: 6 },
+  { label: 'Malacca', center: [3.5, 100], zoom: 6 },
+  { label: 'World', center: [20, 40], zoom: 2 },
+];
 
 const ZONE_ORDER: ZoneKey[] = ['territorial', 'contiguous', 'eez', 'foreign', 'boundary', 'highRisk', 'geofence'];
 
@@ -82,6 +92,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   const layersEl = h('details', { class: 'map-overlay layers', open: true });
   const legendEl = h('details', { class: 'map-overlay legend', open: true });
   const coordsEl = h('div', { class: 'map-overlay coords' }, '—');
+  const regionsEl = h('div', { class: 'map-overlay regions', role: 'group', 'aria-label': 'Jump to region' });
   const toastsEl = h('div', { class: 'toasts', 'aria-live': 'polite' });
 
   const mapView = new MapView(
@@ -170,7 +181,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   clear(root);
   root.append(
     header,
-    h('div', { class: 'workspace' }, alertsEl, h('div', { class: 'center' }, mapEl, layersEl, legendEl, coordsEl, pageEl), detailEl),
+    h('div', { class: 'workspace' }, alertsEl, h('div', { class: 'center' }, mapEl, regionsEl, layersEl, legendEl, coordsEl, pageEl), detailEl),
     toastsEl,
   );
 
@@ -261,6 +272,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
         } },
         h('option', { value: 'simulated' }, 'Simulated · Indian Ocean'),
         h('option', { value: 'digitraffic' }, 'Live AIS · Baltic (real-time)'),
+        h('option', { value: '', disabled: true }, 'Live AIS · India / World: needs server + free key (see README)'),
       ) as HTMLSelectElement;
       sel.value = src;
       sourceEl.append(sel);
@@ -273,11 +285,13 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     const live = (data?.source ?? 'simulated') !== 'simulated';
     statusEl.className = `pill ${!status.online ? 'bad' : live ? 'ok' : 'sim'}`;
     clear(statusEl);
+    const feedError = data?.feed?.error ?? status.error;
     const label = !status.online
       ? 'Reconnecting…'
-      : status.error
-        ? `Feed problem: ${status.error}`
-        : `${live ? 'LIVE' : 'SIM'} · ${data?.vessels.length ?? 0} vessels${data && live ? ` · ${ago(data.ts, Date.now())}` : ''}`;
+      : feedError
+        ? `Feed problem: ${feedError}`
+        : `${live ? 'LIVE' : 'SIM'} · ${data?.vessels.length ?? 0} vessels${data && live ? ` · ${ago(data.feed?.lastMessageAt ?? data.ts, Date.now())}` : ''}`;
+    if (feedError) statusEl.className = 'pill bad';
     statusEl.append(h('span', { class: 'dot' }), label);
   }
 
@@ -392,6 +406,13 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     mapView.vessels.set({ selected: v.mmsi, trails });
   }
 
+  function renderRegions(): void {
+    clear(regionsEl);
+    for (const r of REGIONS) {
+      regionsEl.append(h('button', { class: 'btn small ghost', onclick: () => mapView.map.setView(r.center, r.zoom, { animate: true }) }, r.label));
+    }
+  }
+
   function renderOverlays(): void {
     // layers
     clear(layersEl);
@@ -450,6 +471,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     const overlayTab = tab === 'zones';
     mapEl.classList.toggle('hidden', !isMap && !overlayTab);
     layersEl.classList.toggle('hidden', !isMap && !overlayTab);
+    regionsEl.classList.toggle('hidden', !isMap);
     legendEl.classList.toggle('hidden', !isMap);
     coordsEl.classList.toggle('hidden', !isMap && !overlayTab);
     pageEl.classList.toggle('hidden', isMap);
@@ -481,6 +503,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
 
   function renderAll(): void {
     renderTabs();
+    renderRegions();
     renderSource();
     renderStatus();
     renderAlerts();

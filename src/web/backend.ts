@@ -8,7 +8,7 @@ import { createApp } from '../api/app';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
 import { Simulator } from '../core/simulator';
-import type { Alert, DataSource, PublicUser, Snapshot } from '../core/types';
+import type { Alert, DataSource, FeedInfo, PublicUser, Snapshot } from '../core/types';
 
 export type Mode = 'live' | 'demo';
 export interface Session {
@@ -20,6 +20,7 @@ export interface FeedData {
   alerts: Alert[];
   ts: number;
   source: DataSource;
+  feed?: FeedInfo;
 }
 export interface Reply<T> {
   status: number;
@@ -141,11 +142,11 @@ export class Backend {
   async fetchOnce(session: Session): Promise<FeedData | null> {
     try {
       const [v, a] = await Promise.all([
-        this.request<{ vessels: FeedData['vessels']; ts: number; source: DataSource }>('GET', '/api/vessels', session.token),
+        this.request<{ vessels: FeedData['vessels']; ts: number; source: DataSource; feed?: FeedInfo }>('GET', '/api/vessels', session.token),
         this.request<{ alerts: Alert[] }>('GET', '/api/alerts?limit=300', session.token),
       ]);
       if (v.status !== 200 || a.status !== 200) return null;
-      return { vessels: v.data.vessels, alerts: a.data.alerts, ts: v.data.ts, source: v.data.source };
+      return { vessels: v.data.vessels, alerts: a.data.alerts, ts: v.data.ts, source: v.data.source, feed: v.data.feed };
     } catch {
       return null;
     }
