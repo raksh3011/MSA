@@ -6,6 +6,8 @@ import type { CaseRecord } from '../domain/types';
 import { Backend, type FeedData, type FeedStatus, type Session } from './backend';
 import { logoMark, SHORT, NAME } from './brand';
 import type { Catalog, Ctx } from './ctx';
+import { billingPage, opsPage, overviewPage, reportsPage, revenuePage, serviceLevelsPage } from './business';
+import { icon } from './charts';
 import { casesPage, orgPage, orgsAdminPage, registryPage, supplyChainPage, voyagesPage } from './enterprise';
 import { clear, fmtDateTime, fmtTime, h } from './dom';
 import { MapView, ZONE_LABEL, ZONE_STYLE, type ZoneKey } from './map';
@@ -14,7 +16,7 @@ import { openReportDialog } from './report';
 import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_GROUP, RULE_LABEL, SEVERITY_RANK } from './style-tokens';
 import { getTheme, toggleTheme } from './theme';
 
-type Tab = 'map' | 'supply' | 'voyages' | 'fleet' | 'incidents' | 'org' | 'analytics' | 'zones' | 'orgs' | 'admin';
+type Tab = 'overview' | 'map' | 'supply' | 'voyages' | 'fleet' | 'incidents' | 'org' | 'analytics' | 'zones' | 'orgs' | 'admin' | 'billing' | 'reports' | 'service' | 'revenue' | 'ops';
 
 const SOURCE_LABEL: Record<DataSource, string> = {
   simulated: 'Simulated · Indian Ocean scenarios',
@@ -81,7 +83,8 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   root.className = 'app';
   const isOperator = isCompanyRole(session.user.role); // shipping-company staff (tenant users)
   const canManage = !isOperator;
-  let tab: Tab = isOperator ? 'supply' : 'map';
+  let tab: Tab = isOperator ? 'overview' : 'map';
+  let railCollapsed = loadJson<{ v: boolean }>('orvms_rail', { v: window.innerWidth < 1500 }).v;
   let catalog: Catalog | null = null;
   let data: FeedData | null = null;
   let selected: string | null = null;
@@ -112,7 +115,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   const alertsEl = h('aside', { class: 'panel', 'aria-label': 'Alerts' });
   const detailEl = h('aside', { class: 'panel detail', 'aria-label': 'Vessel details' });
   const pageEl = h('section', { class: 'page hidden' });
-  const tabsEl = h('nav', { class: 'tabs', 'aria-label': 'Sections' });
+  const tabsEl = h('nav', { class: 'sidebar', 'aria-label': 'Sections' });
   const statusEl = h('span', { class: 'pill' });
   const clockEl = h('span', { class: 'clock' });
   const sourceEl = h('span', {});
@@ -184,6 +187,10 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     nowMs: () => data?.ts ?? Date.now(),
     showRoute: (w) => mapView.showRoute(w),
     refreshIncidents: () => loadIncidents(),
+    navigate: (t) => {
+      tab = t as Tab;
+      renderAll();
+    },
     reportVessel: (mmsi) => {
       const v = data?.vessels.find((x) => x.mmsi === mmsi);
       if (v) openReportDialog(ctx, { mmsi: v.mmsi, name: v.name, lat: v.lat, lon: v.lon });
@@ -191,17 +198,23 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   };
 
   const role = session.user.role;
-  const tabs: Array<{ id: Tab; label: string; show: boolean }> = [
-    { id: 'map', label: 'Live map', show: true },
-    { id: 'supply', label: 'Supply chain', show: isOperator },
-    { id: 'voyages', label: 'Voyages', show: isOperator },
-    { id: 'fleet', label: isOperator ? 'Fleet' : 'Watchlist', show: role !== 'admin' },
-    { id: 'incidents', label: isOperator ? 'My reports' : 'Case desk', show: true },
-    { id: 'org', label: 'Organisation', show: isOperator },
-    { id: 'analytics', label: 'Analytics', show: true },
-    { id: 'zones', label: 'Geofences', show: !isOperator },
-    { id: 'orgs', label: 'Customers', show: role === 'admin' },
-    { id: 'admin', label: 'Administration', show: role === 'admin' },
+  const tabs: Array<{ id: Tab; label: string; icon: string; group: string; show: boolean }> = [
+    { id: 'overview', label: 'Overview', icon: 'overview', group: 'Operate', show: isOperator },
+    { id: 'map', label: 'Live map', icon: 'map', group: isOperator ? 'Operate' : 'Monitor', show: true },
+    { id: 'supply', label: 'Supply chain', icon: 'supply', group: 'Operate', show: isOperator },
+    { id: 'voyages', label: 'Voyages', icon: 'voyages', group: 'Operate', show: isOperator },
+    { id: 'fleet', label: isOperator ? 'Fleet registry' : 'Watchlist', icon: isOperator ? 'fleet' : 'watch', group: isOperator ? 'Operate' : 'Monitor', show: role !== 'admin' },
+    { id: 'zones', label: 'Geofences', icon: 'zones', group: 'Monitor', show: !isOperator },
+    { id: 'incidents', label: isOperator ? 'My reports' : 'Case desk', icon: 'incidents', group: 'Respond', show: true },
+    { id: 'service', label: 'Service levels', icon: 'service', group: 'Respond', show: !isOperator },
+    { id: 'reports', label: 'Compliance reports', icon: 'reports', group: 'Govern', show: role === 'org_admin' || role === 'risk_officer' },
+    { id: 'analytics', label: 'Analytics', icon: 'analytics', group: 'Govern', show: true },
+    { id: 'billing', label: 'Billing & contract', icon: 'billing', group: 'Account', show: role === 'org_admin' },
+    { id: 'org', label: 'Organisation', icon: 'org', group: 'Account', show: isOperator },
+    { id: 'orgs', label: 'Customers', icon: 'orgs', group: 'Platform', show: role === 'admin' },
+    { id: 'revenue', label: 'Revenue', icon: 'revenue', group: 'Platform', show: role === 'admin' },
+    { id: 'ops', label: 'Operations', icon: 'ops', group: 'Platform', show: role === 'admin' },
+    { id: 'admin', label: 'Administration', icon: 'admin', group: 'Platform', show: role === 'admin' },
   ];
 
   // Compact account menu: avatar button -> name, role, theme toggle and Sign out (always reachable at any width).
@@ -226,12 +239,14 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   const userMenu = h('div', { class: 'user-menu-wrap' }, avatarBtn, menuPanel);
   document.addEventListener('click', closeMenu);
 
+  const workspaceEl = h('div', { class: 'workspace' }, alertsEl, h('div', { class: 'center' }, mapEl, regionsEl, layersEl, legendEl, coordsEl, pageEl), detailEl);
+  const shellEl = h('div', { class: `shell ${railCollapsed ? 'collapsed' : ''}` }, tabsEl, workspaceEl);
   const header = h(
     'header',
     { class: 'hdr' },
+    h('button', { class: 'rail-toggle', 'aria-label': 'Collapse or expand navigation', title: 'Collapse / expand navigation', onclick: () => { railCollapsed = !railCollapsed; saveJson('orvms_rail', { v: railCollapsed }); shellEl.classList.toggle('collapsed', railCollapsed); } }, icon('menu', 18)),
     h('div', { class: 'brand-lockup', title: NAME }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, 'Ocean Risk & Vessel Monitoring'))),
     h('div', { class: 'search' }, h('span', { class: 's-ico', 'aria-hidden': 'true' }, '⌕'), searchInput, h('span', { class: 'kbd' }, '/'), resultsEl),
-    tabsEl,
     h('div', { class: 'spacer' }),
     h(
       'div',
@@ -246,7 +261,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   clear(root);
   root.append(
     header,
-    h('div', { class: 'workspace' }, alertsEl, h('div', { class: 'center' }, mapEl, regionsEl, layersEl, legendEl, coordsEl, pageEl), detailEl),
+    shellEl,
     toastsEl,
   );
 
@@ -314,10 +329,24 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   // ── renderers ───────────────────────────────────────────────────────────────
   function renderTabs(): void {
     clear(tabsEl);
+    let group = '';
     for (const t of tabs.filter((x) => x.show)) {
+      if (t.group !== group) {
+        group = t.group;
+        tabsEl.append(h('div', { class: 'nav-group' }, group));
+      }
       const openCount = t.id === 'incidents' ? incidents.filter((i) => i.status === 'open').length : 0;
-      tabsEl.append(h('button', { class: `tab ${t.id === tab ? 'active' : ''}`, 'aria-current': t.id === tab ? 'page' : undefined, onclick: () => { tab = t.id; renderAll(); } }, t.label, openCount > 0 ? h('span', { class: 'tab-badge' }, String(openCount)) : null));
+      tabsEl.append(
+        h(
+          'button',
+          { class: `nav-item ${t.id === tab ? 'active' : ''}`, title: t.label, 'aria-current': t.id === tab ? 'page' : undefined, onclick: () => { tab = t.id; renderAll(); } },
+          icon(t.icon, 18),
+          h('span', { class: 'nav-label' }, t.label),
+          openCount > 0 ? h('span', { class: 'tab-badge' }, String(openCount)) : null,
+        ),
+      );
     }
+    tabsEl.append(h('div', { class: 'nav-foot' }, h('span', { class: 'nav-label' }, `${SHORT} v3.1`)));
   }
 
   function renderSource(): void {
@@ -568,6 +597,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   async function renderPage(): Promise<void> {
     const isMap = tab === 'map';
     const overlayTab = tab === 'zones';
+    workspaceEl.classList.toggle('wide-page', !isMap && !overlayTab);
     mapEl.classList.toggle('hidden', !isMap && !overlayTab);
     layersEl.classList.toggle('hidden', !isMap && !overlayTab);
     regionsEl.classList.toggle('hidden', !isMap);
@@ -578,6 +608,12 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     clear(pageEl);
     if (isMap) return mapView.invalidate();
     if (tab === 'fleet') pageEl.append(isOperator ? registryPage(ctx) : fleetPage(ctx, () => void downloadCsv()));
+    else if (tab === 'overview') pageEl.append(overviewPage(ctx));
+    else if (tab === 'billing') pageEl.append(billingPage(ctx));
+    else if (tab === 'reports') pageEl.append(reportsPage(ctx));
+    else if (tab === 'service') pageEl.append(serviceLevelsPage(ctx));
+    else if (tab === 'revenue') pageEl.append(revenuePage(ctx));
+    else if (tab === 'ops') pageEl.append(opsPage(ctx));
     else if (tab === 'supply') pageEl.append(supplyChainPage(ctx));
     else if (tab === 'voyages') pageEl.append(voyagesPage(ctx));
     else if (tab === 'org') pageEl.append(orgPage(ctx));

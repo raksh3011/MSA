@@ -1,5 +1,6 @@
 /** Tenant administration: registry, users, subscription usage, API keys and webhooks. */
 import { isCompanyRole, type Role } from '../core/types';
+import { defaultContract } from '../domain/billing';
 import { checkQuota, estimateInvoice, periodOf, planOf } from '../domain/plans';
 import type { ApiKey, ApiScope, Organization, RegistryVessel, Webhook, WebhookEvent } from '../domain/types';
 import { isAllowedWebhookUrl, randomToken, sha256Hex } from '../domain/webhooks';
@@ -125,7 +126,7 @@ export async function authenticateApiKey(s: Services, raw: string): Promise<Resu
 }
 
 // ── webhooks ─────────────────────────────────────────────────────────────────
-export const WEBHOOK_EVENTS: WebhookEvent[] = ['alert.created', 'voyage.status_changed', 'voyage.deviation', 'case.created', 'case.escalated', 'case.closed', 'shipment.at_risk'];
+export const WEBHOOK_EVENTS: WebhookEvent[] = ['alert.created', 'voyage.status_changed', 'voyage.deviation', 'case.created', 'case.escalated', 'case.closed', 'shipment.at_risk', 'invoice.issued', 'invoice.paid', 'report.generated'];
 
 export async function createWebhook(s: Services, org: Organization, actor: string, input: { url?: unknown; events?: unknown }): Promise<Result<Webhook>> {
   if (!planOf(org).limits.apiKeysAndWebhooks) return bad('Webhooks are not included in your plan. Upgrade to Professional or Enterprise.', 402);
@@ -159,6 +160,7 @@ export async function createOrganization(
     if (!u.ok) return u;
   }
   await s.repo.orgs.insert(org);
+  await s.repo.contracts.upsert(defaultContract(org, actor, s.now()));
   s.hub.log(actor, 'org.created', `${org.id} ${org.name} (${org.planId})`);
   return { ok: true, value: org };
 }

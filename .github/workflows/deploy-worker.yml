@@ -5,6 +5,12 @@ name: Deploy to Cloudflare (live backend)
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        default: staging
 
 jobs:
   deploy:
@@ -18,7 +24,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - run: npx wrangler deploy
+      - run: npx wrangler deploy ${{ inputs.environment == 'staging' && '--env staging' || '' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

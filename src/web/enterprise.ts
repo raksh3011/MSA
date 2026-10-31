@@ -6,6 +6,7 @@ import type { RiskAssessment, Voyage } from '../domain/types';
 import type { ShipmentView, SupplyChainSummary } from '../domain/supplychain';
 import type { CaseRecord, Organization, Plan, RegistryVessel, Shipment } from '../domain/types';
 import { slaRemainingMinutes } from '../domain/cases';
+import { openPostIncident } from './business';
 import type { Ctx } from './ctx';
 import { clear, fmtDateTime, h } from './dom';
 import { CATEGORY_TEXT } from './report';
@@ -416,6 +417,11 @@ export function casesPage(ctx: Ctx, myDesk: string | undefined): HTMLElement {
           h('p', { class: 'inc-note' }, h('strong', {}, `${CATEGORY_TEXT[c.category]}. `), c.note || ''),
           h('ul', { class: 'timeline' }, ...c.history.map((e) => h('li', {}, h('span', { class: 'muted' }, `${dt(e.ts)} `), `${e.actor}: ${e.action.replace(/_/g, ' ')}${e.note ? ` — ${e.note}` : ''}`))),
           c.closureCode ? h('p', { class: 'muted' }, `Closed as: ${c.closureCode.replace(/_/g, ' ')}`) : null,
+          c.postIncident
+            ? h('div', { class: 'pir' }, h('strong', {}, 'Post-incident report'), h('p', {}, c.postIncident.summary), h('p', { class: 'muted small' }, `Findings: ${c.postIncident.findings}`), h('p', { class: 'muted small' }, `Actions: ${c.postIncident.actionsTaken}`), c.postIncident.lessonsLearned ? h('p', { class: 'muted small' }, `Lessons: ${c.postIncident.lessonsLearned}`) : null, h('p', { class: 'muted small' }, `Filed by ${c.postIncident.filedBy} · ${dt(c.postIncident.filedAt)}`))
+            : c.status === 'closed' && !isReporter
+              ? h('button', { class: 'btn small primary', onclick: () => openPostIncident(ctx, c, load) }, 'File post-incident report')
+              : null,
           isReporter || c.status === 'closed' ? null : controllerActions(ctx, c, controllers, load),
         ),
       );

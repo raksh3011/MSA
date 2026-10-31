@@ -1,4 +1,4 @@
-import type { ApiKey, CaseRecord, Delivery, Organization, RegistryVessel, Shipment, UsageMetric, Voyage, Webhook } from '../domain/types';
+import type { ApiKey, CaseRecord, Contract, Delivery, Invoice, Organization, ReportSnapshot, RegistryVessel, Shipment, UsageMetric, Voyage, Webhook } from '../domain/types';
 import type { CaseFilter, Repo } from './repo';
 
 const clone = <T>(x: T): T => structuredClone(x);
@@ -14,6 +14,9 @@ export class MemoryRepo implements Repo {
   private hookMap = new Map<string, Webhook>();
   private deliveryMap = new Map<string, Delivery>();
   private usageMap = new Map<string, number>();
+  private contractMap = new Map<string, Contract>();
+  private invoiceMap = new Map<string, Invoice>();
+  private reportMap = new Map<string, ReportSnapshot>();
 
   orgs = {
     get: async (id: string) => clone(this.orgMap.get(id)),
@@ -101,6 +104,46 @@ export class MemoryRepo implements Repo {
     update: async (d: Delivery) => void this.deliveryMap.set(d.id, clone(d)),
     list: async (orgId: string, limit: number) =>
       [...this.deliveryMap.values()].filter((d) => d.orgId === orgId).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map(clone),
+    purgeBefore: async (orgId: string, before: number) => {
+      let n = 0;
+      for (const [id, d] of this.deliveryMap) if (d.orgId === orgId && d.createdAt < before && this.deliveryMap.delete(id)) n++;
+      return n;
+    },
+  };
+
+  contracts = {
+    get: async (orgId: string) => clone(this.contractMap.get(orgId)),
+    list: async () => [...this.contractMap.values()].map(clone),
+    upsert: async (c: Contract) => void this.contractMap.set(c.orgId, clone(c)),
+  };
+
+  invoices = {
+    get: async (orgId: string, id: string) => {
+      const i = this.invoiceMap.get(id);
+      return i && i.orgId === orgId ? clone(i) : undefined;
+    },
+    getByPeriod: async (orgId: string, period: string) => clone([...this.invoiceMap.values()].find((i) => i.orgId === orgId && i.period === period)),
+    list: async (orgId: string) => [...this.invoiceMap.values()].filter((i) => i.orgId === orgId).sort((a, b) => b.period.localeCompare(a.period)).map(clone),
+    listAll: async () => [...this.invoiceMap.values()].sort((a, b) => b.period.localeCompare(a.period)).map(clone),
+    insert: async (i: Invoice) => {
+      if ([...this.invoiceMap.values()].some((x) => x.orgId === i.orgId && x.period === i.period)) throw new Error('UNIQUE constraint failed: invoices.org_id, invoices.period');
+      this.invoiceMap.set(i.id, clone(i));
+    },
+    update: async (i: Invoice) => void this.invoiceMap.set(i.id, clone(i)),
+  };
+
+  reports = {
+    get: async (orgId: string, id: string) => {
+      const r = this.reportMap.get(id);
+      return r && r.orgId === orgId ? clone(r) : undefined;
+    },
+    list: async (orgId: string) => [...this.reportMap.values()].filter((r) => r.orgId === orgId).sort((a, b) => b.generatedAt - a.generatedAt).map(clone),
+    insert: async (r: ReportSnapshot) => void this.reportMap.set(r.id, clone(r)),
+    purgeBefore: async (orgId: string, before: number) => {
+      let n = 0;
+      for (const [id, r] of this.reportMap) if (r.orgId === orgId && r.generatedAt < before && this.reportMap.delete(id)) n++;
+      return n;
+    },
   };
 
   usage = {

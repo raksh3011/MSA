@@ -11,15 +11,18 @@ flowchart TB
     SC["Supply-chain control tower"]
     VY["Voyages & approvals"]
     FL["Fleet registry"]
-    CD["Case desk (SLA)"]
+    CD["Case desk (SLA) & service levels"]
     ORG["Organisation: plan, users, API keys, webhooks"]
-    ADM["Platform admin: customers, policy, audit"]
+    BIL["Billing, contract, invoices"]
+    REP["Compliance reports"]
+    ADM["Platform admin: customers, revenue, operations"]
   end
   subgraph API["API / controller layer (Hono REST + WebSocket)"]
     AUTH["Auth & RBAC middleware (JWT)"]
     RT1["Core routes: vessels, alerts, geofences, policy, audit"]
     RT2["Enterprise routes: org, registry, voyages, shipments, cases, catalog, admin"]
     RT3["Integration API (X-API-Key)"]
+    RT4["Business routes: overview, billing, reports, analytics, ops"]
   end
   subgraph SVC["Application services (business orchestration)"]
     S1["Org / registry / quota"]
@@ -28,6 +31,9 @@ flowchart TB
     S4["Case service (SLA)"]
     S5["Webhook dispatcher"]
     S6["Background runner"]
+    S7["Billing & contracts"]
+    S8["Reports & retention"]
+    S9["Overview & ops"]
   end
   subgraph DOM["Domain logic (pure functions)"]
     D1["Risk engine & zone model"]
@@ -35,6 +41,8 @@ flowchart TB
     D3["Supply-chain ETA / delivery risk"]
     D4["SLA & escalation rules"]
     D5["Plans, quotas, invoice estimate"]
+    D6["Invoicing, GST, receivables"]
+    D7["Risk report & case analytics"]
   end
   UI --> API --> SVC --> DOM
 ```
@@ -48,6 +56,9 @@ flowchart LR
   SYN["Synthetic traffic generator (labelled)"] --> ADP
   ADP --> HUB["Hub: vessel state + risk engine + alerts"]
   HUB -->|alerts, positions| BG["Background runner every 5 s"]
+  BG --> BILL["Month-end billing"]
+  BG --> RPT["Scheduled reports"]
+  BG --> RET["Retention purge"]
   BG --> VM["Voyage monitor"]
   BG --> SLA["SLA sweeper"]
   BG --> SH["Shipment sweeper"]
@@ -71,6 +82,9 @@ erDiagram
   organizations ||--o{ api_keys : issues
   organizations ||--o{ webhooks : subscribes
   organizations ||--o{ usage : metered
+  organizations ||--|| contracts : "agreed terms"
+  organizations ||--o{ invoices : billed
+  organizations ||--o{ reports : snapshots
   voyages ||--o{ shipments : carries
   webhooks ||--o{ webhook_deliveries : "delivery log"
   organizations { text id PK text name text kind text plan_id text status int created_at }
@@ -82,6 +96,9 @@ erDiagram
   webhooks { text id PK text org_id FK text url text secret json events int active }
   webhook_deliveries { text id PK text webhook_id text event text status int attempts int response_status }
   usage { text org_id PK text period PK text metric PK int count }
+  contracts { text org_id PK text support_tier int term_months int renews_at int payment_terms_days real sla_uptime_pct text gstin text report_frequency int retention_months }
+  invoices { text id PK text org_id FK text number UK text period real subtotal_inr real gst_inr real total_inr text status json payments }
+  reports { text id PK text org_id FK text period int generated_at text generated_by json payload }
 ```
 
 *Operational (non-relational) state:* live vessel positions, alerts, watchlists, geofences, users (identity) and the audit trail live in the Durable Object's storage; they are high-churn and rebuilt from the feed. *Reference data in code:* ports, route templates, plans, Coast Guard stations, modelled zone geometry.

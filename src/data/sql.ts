@@ -1,5 +1,5 @@
 /** SQL implementation of the repository (Cloudflare D1 or any SQLite adapter with the same shape). */
-import type { ApiKey, CaseRecord, Delivery, Organization, RegistryVessel, Shipment, UsageMetric, Voyage, Webhook } from '../domain/types';
+import type { ApiKey, CaseRecord, Contract, Delivery, Invoice, Organization, ReportSnapshot, RegistryVessel, Shipment, UsageMetric, Voyage, Webhook } from '../domain/types';
 import { MIGRATIONS } from './migrations';
 import type { CaseFilter, Repo } from './repo';
 
@@ -63,8 +63,21 @@ const caseOf = (r: Row): CaseRecord => ({
   station: { id: r.station_id as string, name: r.station_name as string, distanceNm: r.station_distance_nm as number, desk: r.desk as string },
   manual: r.manual === 1, assignee: opt(r.assignee), createdAt: r.created_at as number, ackDueAt: r.ack_due_at as number, resolveDueAt: r.resolve_due_at as number,
   ackedAt: opt(r.acked_at), closedAt: opt(r.closed_at), closureCode: opt(r.closure_code), escalationLevel: r.escalation_level as CaseRecord['escalationLevel'],
-  slaBreached: r.sla_breached === 1, history: parse(r.history),
+  slaBreached: r.sla_breached === 1, history: parse(r.history), postIncident: r.post_incident ? parse(r.post_incident) : undefined,
 });
+
+const contractOf = (r: Row): Contract => ({
+  orgId: r.org_id as string, supportTier: r.support_tier as Contract['supportTier'], termMonths: r.term_months as number, startsAt: r.starts_at as number, renewsAt: r.renews_at as number,
+  autoRenew: r.auto_renew === 1, paymentTermsDays: r.payment_terms_days as number, slaUptimePct: r.sla_uptime_pct as number, billingContact: r.billing_contact as string, gstin: r.gstin as string,
+  reportFrequency: r.report_frequency as Contract['reportFrequency'], retentionMonths: r.retention_months as number, signedBy: r.signed_by as string, signedAt: r.signed_at as number,
+});
+
+const invoiceOf = (r: Row): Invoice => ({
+  id: r.id as string, orgId: r.org_id as string, number: r.number as string, period: r.period as string, issuedAt: r.issued_at as number, dueAt: r.due_at as number, lines: parse(r.lines),
+  subtotalInr: r.subtotal_inr as number, gstInr: r.gst_inr as number, totalInr: r.total_inr as number, status: r.status as Invoice['status'], payments: parse(r.payments), paidAt: opt(r.paid_at),
+});
+
+const reportOf = (r: Row): ReportSnapshot => ({ id: r.id as string, orgId: r.org_id as string, kind: r.kind as ReportSnapshot['kind'], period: r.period as string, generatedAt: r.generated_at as number, generatedBy: r.generated_by as string, payload: parse(r.payload) });
 
 const keyOf = (r: Row): ApiKey => ({
   id: r.id as string, orgId: r.org_id as string, name: r.name as string, prefix: r.prefix as string, hash: r.hash as string, scopes: parse(r.scopes),
@@ -194,8 +207,8 @@ export class SqlRepo implements Repo {
       ).run()),
     update: async (c: CaseRecord) =>
       void (await this.q(
-        `UPDATE cases SET status = ?, assignee = ?, acked_at = ?, closed_at = ?, closure_code = ?, escalation_level = ?, sla_breached = ?, history = ? WHERE id = ?`,
-        c.status, c.assignee, c.ackedAt, c.closedAt, c.closureCode, c.escalationLevel, c.slaBreached ? 1 : 0, json(c.history), c.id,
+        `UPDATE cases SET status = ?, assignee = ?, acked_at = ?, closed_at = ?, closure_code = ?, escalation_level = ?, sla_breached = ?, history = ?, post_incident = ? WHERE id = ?`,
+        c.status, c.assignee, c.ackedAt, c.closedAt, c.closureCode, c.escalationLevel, c.slaBreached ? 1 : 0, json(c.history), c.postIncident ? json(c.postIncident) : null, c.id,
       ).run()),
   };
 
@@ -229,6 +242,47 @@ export class SqlRepo implements Repo {
       void (await this.q('INSERT INTO webhook_deliveries (id, org_id, webhook_id, event, payload, status, attempts, response_status, error, created_at, delivered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', d.id, d.orgId, d.webhookId, d.event, d.payload, d.status, d.attempts, d.responseStatus, d.error, d.createdAt, d.deliveredAt).run()),
     update: async (d: Delivery) => void (await this.q('UPDATE webhook_deliveries SET status = ?, attempts = ?, response_status = ?, error = ?, delivered_at = ? WHERE id = ?', d.status, d.attempts, d.responseStatus, d.error, d.deliveredAt, d.id).run()),
     list: (orgId: string, limit: number) => this.rows('SELECT * FROM webhook_deliveries WHERE org_id = ? ORDER BY created_at DESC LIMIT ?', deliveryOf, orgId, limit),
+    purgeBefore: async (orgId: string, before: number) => {
+      const n = (await this.one('SELECT COUNT(*) AS n FROM webhook_deliveries WHERE org_id = ? AND created_at < ?', (r) => r.n as number, orgId, before)) ?? 0;
+      if (n > 0) await this.q('DELETE FROM webhook_deliveries WHERE org_id = ? AND created_at < ?', orgId, before).run();
+      return n;
+    },
+  };
+
+  contracts = {
+    get: (orgId: string) => this.one('SELECT * FROM contracts WHERE org_id = ?', contractOf, orgId),
+    list: () => this.rows('SELECT * FROM contracts', contractOf),
+    upsert: async (c: Contract) =>
+      void (await this.q(
+        `INSERT INTO contracts (org_id, support_tier, term_months, starts_at, renews_at, auto_renew, payment_terms_days, sla_uptime_pct, billing_contact, gstin, report_frequency, retention_months, signed_by, signed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT (org_id) DO UPDATE SET support_tier = excluded.support_tier, term_months = excluded.term_months, starts_at = excluded.starts_at, renews_at = excluded.renews_at, auto_renew = excluded.auto_renew,
+           payment_terms_days = excluded.payment_terms_days, sla_uptime_pct = excluded.sla_uptime_pct, billing_contact = excluded.billing_contact, gstin = excluded.gstin,
+           report_frequency = excluded.report_frequency, retention_months = excluded.retention_months, signed_by = excluded.signed_by, signed_at = excluded.signed_at`,
+        c.orgId, c.supportTier, c.termMonths, c.startsAt, c.renewsAt, c.autoRenew ? 1 : 0, c.paymentTermsDays, c.slaUptimePct, c.billingContact, c.gstin, c.reportFrequency, c.retentionMonths, c.signedBy, c.signedAt,
+      ).run()),
+  };
+
+  invoices = {
+    get: (orgId: string, id: string) => this.one('SELECT * FROM invoices WHERE org_id = ? AND id = ?', invoiceOf, orgId, id),
+    getByPeriod: (orgId: string, period: string) => this.one('SELECT * FROM invoices WHERE org_id = ? AND period = ?', invoiceOf, orgId, period),
+    list: (orgId: string) => this.rows('SELECT * FROM invoices WHERE org_id = ? ORDER BY period DESC', invoiceOf, orgId),
+    listAll: () => this.rows('SELECT * FROM invoices ORDER BY period DESC', invoiceOf),
+    insert: async (i: Invoice) =>
+      void (await this.q('INSERT INTO invoices (id, org_id, number, period, issued_at, due_at, lines, subtotal_inr, gst_inr, total_inr, status, payments, paid_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        i.id, i.orgId, i.number, i.period, i.issuedAt, i.dueAt, json(i.lines), i.subtotalInr, i.gstInr, i.totalInr, i.status, json(i.payments), i.paidAt).run()),
+    update: async (i: Invoice) => void (await this.q('UPDATE invoices SET status = ?, payments = ?, paid_at = ? WHERE id = ? AND org_id = ?', i.status, json(i.payments), i.paidAt, i.id, i.orgId).run()),
+  };
+
+  reports = {
+    get: (orgId: string, id: string) => this.one('SELECT * FROM reports WHERE org_id = ? AND id = ?', reportOf, orgId, id),
+    list: (orgId: string) => this.rows('SELECT * FROM reports WHERE org_id = ? ORDER BY generated_at DESC LIMIT 200', reportOf, orgId),
+    insert: async (r: ReportSnapshot) => void (await this.q('INSERT INTO reports (id, org_id, kind, period, generated_at, generated_by, payload) VALUES (?,?,?,?,?,?,?)', r.id, r.orgId, r.kind, r.period, r.generatedAt, r.generatedBy, json(r.payload)).run()),
+    purgeBefore: async (orgId: string, before: number) => {
+      const n = (await this.one('SELECT COUNT(*) AS n FROM reports WHERE org_id = ? AND generated_at < ?', (r) => r.n as number, orgId, before)) ?? 0;
+      if (n > 0) await this.q('DELETE FROM reports WHERE org_id = ? AND generated_at < ?', orgId, before).run();
+      return n;
+    },
   };
 
   usage = {

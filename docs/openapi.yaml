@@ -125,3 +125,6 @@ x-webhook-events:
   - case.escalated
   - case.closed
   - shipment.at_risk
+  - invoice.issued
+  - invoice.paid
+  - report.generated

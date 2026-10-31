@@ -43,6 +43,15 @@
 | FR-14 | The system shall deliver domain events (`voyage.status_changed`, `voyage.deviation`, `case.*`, `shipment.at_risk`, `alert.created`) to subscribed webhooks, HMAC-signed, retried up to three times, with a delivery log. | `domain/webhooks` |
 | FR-15 | The platform admin shall onboard customer organisations, change plans, suspend accounts, edit risk policy and read the audit trail. | `api/routes` |
 | FR-16 | The system shall export an organisation's alerts as CSV and keep a tamper-evident audit trail of sign-ins, workflow actions, administration and integration changes. | `api`, `core/hub` |
+| FR-17 | Each customer shall have a contract record (support tier, term and renewal, payment terms, availability SLA, billing contact, GSTIN); the customer edits its billing details and the platform administrator edits the commercial terms. | `services/billing` |
+| FR-18 | The system shall issue a monthly invoice per customer (subscription + support add-on + usage-based overage, GST at 18 %), idempotently per period, from a scheduled month-end run or on demand, and notify the customer by webhook. | `domain/billing`, `services/background` |
+| FR-19 | The customer shall view invoices, download them as CSV or print them as PDF, and pay through a sandbox payment gateway (UPI, card, net banking); overdue status and days overdue are derived from the due date. | `services/billing`, `web/business` |
+| FR-20 | The platform administrator shall see recurring revenue, receivables, collections and customer mix. | `services/billing` |
+| FR-21 | The system shall generate a monthly risk and compliance report pack per customer (voyages, approvals, deliveries, incidents, alerts, approval-control checks, posture score) as an immutable snapshot, on demand or on a schedule, exportable as CSV or PDF. | `domain/reports`, `services/reports` |
+| FR-22 | The system shall apply a per-customer retention setting to stored reports and webhook delivery logs, and let a customer export all of its data (portability). | `services/reports`, `services/ops` |
+| FR-23 | Controllers shall file a post-incident report (summary, findings, actions, lessons) for closed cases; the system shall report service levels (SLA compliance, response times, outcomes, desk performance). | `services/cases`, `domain/reports` |
+| FR-24 | The platform administrator shall see an operations console: version and environment, storage and schema version, feed health, scheduled-job status, webhook success rate, record counts and a structured event log, and shall be able to download a full platform backup. | `services/ops` |
+| FR-25 | Customer users shall see an executive overview that joins fleet, voyages, shipments, incidents, plan usage and invoices, with a prioritised list of items needing attention. | `services/overview` |
 
 ## 4. Non-functional requirements
 
@@ -57,10 +66,11 @@
 | NFR-7 Maintainability | Layered modules (core → domain → services → api → UI), strict TypeScript, ≥ 150 automated tests, static analysis in CI. | `npm test`, `npm run lint`, `npm run typecheck` |
 | NFR-8 Usability | Role-specific navigation, accessible controls, keyboard search, responsive layout, plain-language alerts and advisories. | Manual UI verification |
 | NFR-9 Honest data | Zones are *modelled*, synthetic vessels are always labelled, stations are approximate; the product is decision support, not a navigation or legal tool. | UI disclaimers, README |
+| NFR-11 Operability | Structured JSON logs, a health console, scheduled housekeeping (billing, reports, retention), a documented backup and restore procedure, and separate staging and production environments. | `docs/OPERATIONS.md`, ops tests, `wrangler.toml` |
 | NFR-10 Interoperability | A documented REST integration API and signed webhooks let ERP/TMS systems consume risk events. | `docs/openapi.yaml`, integration tests |
 
 ## 5. Out of scope
-Real payment processing and invoicing, real routing engine, official EEZ gazette limits, distress/SAR communications, mobile apps.
+Real payment processing (the gateway is a sandbox), tax filing, real routing engine, official EEZ gazette limits, distress/SAR communications, mobile apps.
 
 ## 6. Traceability
-Each FR maps to a module above and to tests in `tests/unit/domain.test.ts`, `tests/unit/engine.test.ts`, `tests/unit/repo.test.ts`, `tests/api/api.test.ts` and `tests/api/enterprise.test.ts`.
+Each FR maps to a module above and to tests in `tests/unit/domain.test.ts`, `tests/unit/billing.test.ts`, `tests/unit/engine.test.ts`, `tests/unit/repo.test.ts`, `tests/api/api.test.ts`, `tests/api/enterprise.test.ts` and `tests/api/business.test.ts` (the last two run against both storage implementations).

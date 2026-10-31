@@ -62,4 +62,23 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_shipments_voyage ON shipments (voyage_id)`,
     ],
   },
+  {
+    version: 3,
+    name: 'commercial and compliance: contracts, invoices, reports, post-incident',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS contracts (
+        org_id TEXT PRIMARY KEY REFERENCES organizations(id), support_tier TEXT NOT NULL, term_months INTEGER NOT NULL, starts_at INTEGER NOT NULL, renews_at INTEGER NOT NULL,
+        auto_renew INTEGER NOT NULL, payment_terms_days INTEGER NOT NULL, sla_uptime_pct REAL NOT NULL, billing_contact TEXT NOT NULL, gstin TEXT NOT NULL,
+        report_frequency TEXT NOT NULL, retention_months INTEGER NOT NULL, signed_by TEXT NOT NULL, signed_at INTEGER NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS invoices (
+        id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), number TEXT NOT NULL UNIQUE, period TEXT NOT NULL, issued_at INTEGER NOT NULL, due_at INTEGER NOT NULL,
+        lines TEXT NOT NULL, subtotal_inr REAL NOT NULL, gst_inr REAL NOT NULL, total_inr REAL NOT NULL, status TEXT NOT NULL CHECK (status IN ('issued','paid','void')),
+        payments TEXT NOT NULL, paid_at INTEGER, UNIQUE (org_id, period))`,
+      `CREATE INDEX IF NOT EXISTS idx_invoices_org ON invoices (org_id, period)`,
+      `CREATE TABLE IF NOT EXISTS reports (
+        id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), kind TEXT NOT NULL, period TEXT NOT NULL, generated_at INTEGER NOT NULL, generated_by TEXT NOT NULL, payload TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS idx_reports_org ON reports (org_id, generated_at)`,
+      `ALTER TABLE cases ADD COLUMN post_incident TEXT`,
+    ],
+  },
 ];

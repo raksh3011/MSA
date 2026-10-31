@@ -104,3 +104,25 @@ export async function sweepCases(s: Services): Promise<number> {
   }
   return n;
 }
+
+/** Controller files a short post-incident report once a case is closed (findings, actions, lessons). */
+export async function filePostIncident(s: Services, actor: string, id: string, input: { summary?: unknown; findings?: unknown; actionsTaken?: unknown; lessonsLearned?: unknown }): Promise<Result<CaseRecord>> {
+  const c = await s.repo.cases.get(id);
+  if (!c) return bad('Case not found', 404);
+  if (c.status !== 'closed') return bad('A post-incident report can only be filed after the case is closed', 409);
+  const text = (v: unknown, name: string, min: number, max: number): string | { error: string } => {
+    const t = typeof v === 'string' ? v.trim() : '';
+    return t.length >= min && t.length <= max ? t : { error: `${name} must be ${min}-${max} characters` };
+  };
+  const summary = text(input.summary, 'summary', 20, 1500);
+  const findings = text(input.findings, 'findings', 10, 1500);
+  const actionsTaken = text(input.actionsTaken, 'actionsTaken', 10, 1500);
+  const lessons = typeof input.lessonsLearned === 'string' ? input.lessonsLearned.trim().slice(0, 1500) : '';
+  for (const x of [summary, findings, actionsTaken]) if (typeof x !== 'string') return bad(x.error);
+  const now = s.now();
+  c.postIncident = { summary: summary as string, findings: findings as string, actionsTaken: actionsTaken as string, lessonsLearned: lessons, filedBy: actor, filedAt: now };
+  c.history.push({ ts: now, actor, action: 'post_incident_report_filed' });
+  await s.repo.cases.update(c);
+  s.hub.log(actor, 'case.post_incident', c.id);
+  return { ok: true, value: c };
+}

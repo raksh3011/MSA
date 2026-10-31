@@ -3,7 +3,7 @@
  * Two implementations: MemoryRepo (tests) and SqlRepo (Cloudflare D1 / SQLite).
  * Every query for tenant data takes the organisation id, so cross-tenant access is impossible by construction.
  */
-import type { ApiKey, CaseRecord, CaseStatus, Delivery, Organization, RegistryVessel, Shipment, UsageMetric, Voyage, VoyageStatus, Webhook } from '../domain/types';
+import type { ApiKey, CaseRecord, CaseStatus, Contract, Delivery, Invoice, Organization, RegistryVessel, ReportSnapshot, Shipment, UsageMetric, Voyage, VoyageStatus, Webhook } from '../domain/types';
 
 export interface OrgRepo {
   get(id: string): Promise<Organization | undefined>;
@@ -73,6 +73,31 @@ export interface DeliveryRepo {
   insert(d: Delivery): Promise<void>;
   update(d: Delivery): Promise<void>;
   list(orgId: string, limit: number): Promise<Delivery[]>;
+  /** retention: delete delivery logs older than `before`; returns how many were removed */
+  purgeBefore(orgId: string, before: number): Promise<number>;
+}
+
+export interface ContractRepo {
+  get(orgId: string): Promise<Contract | undefined>;
+  list(): Promise<Contract[]>;
+  upsert(c: Contract): Promise<void>;
+}
+
+export interface InvoiceRepo {
+  get(orgId: string, id: string): Promise<Invoice | undefined>;
+  getByPeriod(orgId: string, period: string): Promise<Invoice | undefined>;
+  list(orgId: string): Promise<Invoice[]>;
+  listAll(): Promise<Invoice[]>;
+  insert(i: Invoice): Promise<void>;
+  update(i: Invoice): Promise<void>;
+}
+
+export interface ReportRepo {
+  get(orgId: string, id: string): Promise<ReportSnapshot | undefined>;
+  list(orgId: string): Promise<ReportSnapshot[]>;
+  insert(r: ReportSnapshot): Promise<void>;
+  /** retention: delete snapshots generated before `before`; returns how many were removed */
+  purgeBefore(orgId: string, before: number): Promise<number>;
 }
 
 export interface UsageRepo {
@@ -90,4 +115,7 @@ export interface Repo {
   webhooks: WebhookRepo;
   deliveries: DeliveryRepo;
   usage: UsageRepo;
+  contracts: ContractRepo;
+  invoices: InvoiceRepo;
+  reports: ReportRepo;
 }

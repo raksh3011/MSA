@@ -1,10 +1,13 @@
 /** Periodic business processing: voyage monitoring, SLA escalation and alert → webhook publishing. */
 import { sweepCases } from './cases';
 import { emit, type Services } from './context';
+import { runBilling } from './billing';
 import { fleetMmsis } from './org';
+import { runRetention, runScheduledReports } from './reports';
 import { sweepShipments } from './shipments';
 import { monitorVoyages } from './voyages';
 
+const HOUSEKEEPING_MS = 10 * 60_000;
 const published = new WeakMap<Services, Set<string>>();
 
 /** Publish `alert.created` for alerts about vessels in an organisation's fleet that has a subscribed webhook. */
@@ -35,9 +38,38 @@ export async function publishNewAlerts(s: Services): Promise<number> {
 }
 
 /** One pass of all background business processes. Safe to call every few seconds. */
-export async function runBackground(s: Services): Promise<{ voyageAlerts: number; escalations: number; shipmentAlerts: number; published: number }> {
-  const voyageAlerts = await monitorVoyages(s);
-  const escalations = await sweepCases(s);
-  const shipmentAlerts = await sweepShipments(s);
-  return { voyageAlerts, escalations, shipmentAlerts, published: await publishNewAlerts(s) };
+export async function runBackground(s: Services): Promise<{ voyageAlerts: number; escalations: number; shipmentAlerts: number; published: number; invoices: number; reports: number }> {
+  const t0 = Date.now();
+  const st = s.state;
+  st.backgroundRuns++;
+  try {
+    const voyageAlerts = await monitorVoyages(s);
+    const escalations = await sweepCases(s);
+    const shipmentAlerts = await sweepShipments(s);
+    const published = await publishNewAlerts(s);
+    // slower housekeeping: month-end billing, scheduled report packs and retention run at most every 10 minutes
+    let invoices = 0;
+    let reports = 0;
+    const now = s.now();
+    if (now - st.lastBilling >= HOUSEKEEPING_MS) {
+      st.lastBilling = now;
+      invoices = await runBilling(s);
+    }
+    if (now - st.lastReports >= HOUSEKEEPING_MS) {
+      st.lastReports = now;
+      reports = await runScheduledReports(s);
+    }
+    if (now - st.lastRetention >= HOUSEKEEPING_MS * 6) {
+      st.lastRetention = now;
+      await runRetention(s);
+    }
+    const result = { voyageAlerts, escalations, shipmentAlerts, published, invoices, reports };
+    st.lastBackground = { at: now, ms: Date.now() - t0, result };
+    if (escalations > 0) s.log('warn', 'case.escalations', { count: escalations });
+    return result;
+  } catch (e) {
+    st.backgroundErrors++;
+    s.log('error', 'background.failed', { message: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
 }

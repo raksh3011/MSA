@@ -200,11 +200,24 @@ export interface CaseRecord {
   escalationLevel: 0 | 1 | 2;
   slaBreached: boolean;
   history: CaseEvent[];
+  /** short report filed by the controller after closure (findings and lessons learned) */
+  postIncident?: PostIncidentReport;
+}
+
+export interface PostIncidentReport {
+  summary: string;
+  findings: string;
+  actionsTaken: string;
+  lessonsLearned: string;
+  filedBy: string;
+  filedAt: number;
 }
 
 // ── integration ──────────────────────────────────────────────────────────────
 export type ApiScope = 'read:fleet' | 'read:alerts' | 'read:voyages' | 'write:voyages' | 'read:shipments';
-export type WebhookEvent = 'alert.created' | 'voyage.status_changed' | 'voyage.deviation' | 'case.created' | 'case.escalated' | 'case.closed' | 'shipment.at_risk';
+export type WebhookEvent =
+  | 'alert.created' | 'voyage.status_changed' | 'voyage.deviation' | 'case.created' | 'case.escalated' | 'case.closed' | 'shipment.at_risk'
+  | 'invoice.issued' | 'invoice.paid' | 'report.generated';
 
 export interface ApiKey {
   id: string;
@@ -245,3 +258,105 @@ export interface Delivery {
 }
 
 export type UsageMetric = 'voyages' | 'api_calls';
+
+// ── commercial: contract, invoicing, payments ────────────────────────────────
+export type SupportTier = 'standard' | 'priority' | 'premium';
+export type ReportFrequency = 'off' | 'monthly';
+
+/** Commercial agreement and compliance settings of a customer organisation (one per organisation). */
+export interface Contract {
+  orgId: string;
+  supportTier: SupportTier;
+  termMonths: number;
+  startsAt: number;
+  renewsAt: number;
+  autoRenew: boolean;
+  paymentTermsDays: number;
+  /** contracted platform availability, % */
+  slaUptimePct: number;
+  billingContact: string;
+  gstin: string;
+  reportFrequency: ReportFrequency;
+  /** how long stored reports and webhook delivery logs are kept */
+  retentionMonths: number;
+  signedBy: string;
+  signedAt: number;
+}
+
+export type InvoiceStatus = 'issued' | 'paid' | 'void';
+export type PaymentMethod = 'upi' | 'card' | 'netbanking';
+
+export interface InvoiceLine {
+  description: string;
+  quantity: number;
+  unitInr: number;
+  amountInr: number;
+}
+
+export interface Payment {
+  id: string;
+  ts: number;
+  amountInr: number;
+  method: PaymentMethod;
+  /** reference from the SANDBOX payment gateway (no real money moves) */
+  reference: string;
+  by: string;
+}
+
+export interface Invoice {
+  id: string;
+  orgId: string;
+  number: string;
+  /** billing period, YYYY-MM */
+  period: string;
+  issuedAt: number;
+  dueAt: number;
+  lines: InvoiceLine[];
+  subtotalInr: number;
+  gstInr: number;
+  totalInr: number;
+  status: InvoiceStatus;
+  payments: Payment[];
+  paidAt?: number;
+}
+
+// ── compliance reporting ─────────────────────────────────────────────────────
+export interface ReportSnapshot {
+  id: string;
+  orgId: string;
+  kind: 'risk_compliance';
+  period: string;
+  generatedAt: number;
+  generatedBy: string;
+  payload: RiskReport;
+}
+
+export interface CaseAnalytics {
+  total: number;
+  open: number;
+  closed: number;
+  escalated: number;
+  slaMetPct: number | null;
+  avgAckMinutes: number | null;
+  avgResolveHours: number | null;
+  byPriority: Record<string, number>;
+  byCategory: Record<string, number>;
+  byClosure: Record<string, number>;
+  byDesk: Array<{ desk: string; total: number; open: number; slaMetPct: number | null }>;
+  postIncidentFiled: number;
+  closedWithoutReport: number;
+}
+
+export interface RiskReport {
+  period: string;
+  org: { id: string; name: string; planId: PlanId };
+  generatedAt: number;
+  headline: string[];
+  postureScore: number;
+  voyages: { total: number; byStatus: Record<string, number>; byRiskLevel: Record<string, number>; awaitingApproval: number; avgApprovalHours: number | null; deviations: number };
+  shipments: { total: number; delivered: number; onTimePct: number | null; valueMovedInr: number; valueAtRiskInr: number; byRisk: Record<string, number> };
+  incidents: CaseAnalytics;
+  alerts: { total: number; bySeverity: Record<string, number>; topRules: Array<{ rule: string; count: number }> };
+  usage: { voyages: number; apiCalls: number; vessels: number; users: number };
+  compliance: { checks: Array<{ id: string; label: string; passed: number; total: number }>; passRatePct: number | null };
+}

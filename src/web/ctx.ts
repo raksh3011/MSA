@@ -39,4 +39,6 @@ export interface Ctx {
   showRoute(waypoints: LatLon[] | null): void;
   refreshIncidents(): Promise<void>;
   reportVessel(mmsi: string): void;
+  /** switch to another section of the workspace */
+  navigate(tab: string): void;
 }

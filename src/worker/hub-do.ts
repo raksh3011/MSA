@@ -26,6 +26,8 @@ export interface Env {
   /** Cloudflare D1 database for business records (organisations, registry, voyages, cases, integrations). Falls back to memory when absent. */
   DB?: D1Database;
   JWT_SECRET: string;
+  /** production | staging | local: shown on the operations console */
+  ENVIRONMENT?: string;
   AISSTREAM_API_KEY?: string;
   /** 'aisstream' | 'digitraffic' | 'simulated'. Default: aisstream when a key is set, otherwise simulated. */
   DATA_SOURCE?: string;
@@ -66,6 +68,7 @@ export class OrvmsHub extends DurableObject<Env> {
     this.repo = env.DB ? new SqlRepo(env.DB as unknown as SqlDb) : new MemoryRepo();
     if (!env.DB) console.warn('No D1 binding "DB": business records are kept in memory and lost on restart.');
     this.services = createServices({ hub: this.hub, repo: this.repo, defer: (p) => ctx.waitUntil(p.catch(() => undefined)) });
+    this.services.state.environment = env.ENVIRONMENT ?? 'production';
     this.app = createApp({
       hub: this.hub,
       repo: this.repo,

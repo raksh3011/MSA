@@ -13,6 +13,7 @@ import type { Repo } from '../data/repo';
 import type { FetchLike } from '../domain/webhooks';
 import { createServices, type Services } from '../services/context';
 import { fleetMmsis, orgIdOf } from '../services/org';
+import { registerBusinessRoutes } from './routes/business';
 import { registerEnterpriseRoutes } from './routes/enterprise';
 import { BOUNDARIES, FOREIGN_WATERS, HIGH_RISK_ZONES, ZONES_META } from '../core/zones';
 import { RateLimiter } from './ratelimit';
@@ -208,6 +209,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   // ── enterprise modules: tenancy, registry, voyages, cases, integrations ────
   app.get('/api/stations', requireAuth(), (c) => c.json({ stations: STATIONS }));
   registerEnterpriseRoutes(app, { s: services, requireAuth, readJson, reportLimiter });
+  registerBusinessRoutes(app, { s: services, requireAuth, readJson, reportLimiter });
 
   // ── synthetic traffic switch ───────────────────────────────────────────────
   app.put('/api/feed/synthetic', requireAuth('analyst', 'admin'), async (c) => {

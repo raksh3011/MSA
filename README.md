@@ -3,7 +3,7 @@
 **A multi-tenant maritime risk and supply-chain visibility platform** for shipping companies and the Indian Coast Guard.
 It links *risk at sea* (live and synthetic AIS, modelled maritime zones, graded alerts) to *voyages*, *customer shipments* and *delivery commitments*, with approvals, SLAs, audit and integrations — serverless and free to host.
 
-> Business case, requirements and architecture: [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (four-layer diagrams) · [`docs/TECH_DECISIONS.md`](docs/TECH_DECISIONS.md) · [`docs/openapi.yaml`](docs/openapi.yaml)
+> Business case, requirements and architecture: [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (four-layer diagrams) · [`docs/TECH_DECISIONS.md`](docs/TECH_DECISIONS.md) · [`docs/openapi.yaml`](docs/openapi.yaml) · [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 
 ## What the business gets
 
@@ -11,11 +11,14 @@ It links *risk at sea* (live and synthetic AIS, modelled maritime zones, graded 
 |---|---|---|
 | **Supply-chain control tower** | Shipping companies | Customer shipments with live ETA from the vessel's position, delivery risk vs. the committed date, cargo value passing through risk areas, advisories |
 | **Voyage risk management** | Operators, risk officers, org admins | Plan a voyage → automatic route risk assessment → approval workflow (low auto-approves; high needs a risk officer; critical needs two people; the preparer can never approve) → live route monitoring |
-| **Fleet registry & plans** | Org admins | Master data with CSV import; subscription plans with quotas, usage metering and an invoice estimate |
-| **Case desk with SLAs** | Coast Guard controllers | Suspicious-vessel reports routed to the nearest station/desk, priority P1–P4, SLA timers, assignment, closure codes, automatic escalation |
+| **Fleet registry & plans** | Org admins | Master data with CSV import; subscription plans with quotas and usage metering |
+| **Billing & contract** | Org admins, platform owner | Contract record (support tier, term, payment terms, SLA, GSTIN); monthly invoices with GST, usage overage and a printable PDF / CSV; sandbox payments (UPI, card, net banking); receivables, overdue tracking and a revenue console |
+| **Compliance reports** | Risk officers, org admins | Monthly risk & compliance pack (voyages, approvals, deliveries, incidents, alerts, approval-control checks, posture score) as immutable snapshots, scheduled or on demand; retention settings; full data export |
+| **Executive overview** | Customer users | One screen joining fleet, voyages, shipments, incidents, plan usage and invoices, with a prioritised "needs attention" list |
+| **Case desk with SLAs** | Coast Guard controllers | Suspicious-vessel reports routed to the nearest station/desk, priority P1–P4, SLA timers, assignment, closure codes, automatic escalation, post-incident reports and a service-level dashboard |
 | **Graded alerts** | Coast Guard | Indian vessels in critical zones / foreign waters; foreign & unknown vessels approaching, entering and present in Indian waters; dark vessels; spoofing |
 | **Integration** | Customer IT | API keys (hashed, scoped, quota-metered), OpenAPI, HMAC-signed webhooks with retries and a delivery log |
-| **Platform administration** | Platform owner | Onboard customers, change plans, suspend accounts, risk policy, audit trail |
+| **Platform administration** | Platform owner | Onboard customers, change plans and contracts, suspend accounts, revenue console, operations & health console, platform backup, risk policy, audit trail |
 | **Multi-tenancy** | Everyone | Every customer is an isolated organisation; one tenant can never read or change another's data |
 
 > **Honest scope.** Zones and boundaries are *modelled* (not official limits); synthetic vessels are always labelled; Coast Guard station locations are approximate; payments are not processed (invoices are estimates); this is decision support, not a navigation, legal or distress system.
@@ -26,7 +29,7 @@ It links *risk at sea* (live and synthetic AIS, modelled maritime zones, graded 
 npm install
 npm run live         # build + server + local database + live feeds on http://localhost:8787
 npm run dev          # (second terminal) UI with hot reload on http://localhost:5173, proxied to the server above
-npm test             # 169 unit + API tests (business API runs against memory AND SQL storage)
+npm test             # 226 unit + API tests (business API runs against memory AND SQL storage)
 npm run lint && npm run typecheck && npm run build
 ```
 
@@ -45,8 +48,9 @@ npm run lint && npm run typecheck && npm run build
 1. `operator` → *Supply chain*: six shipments; one is **late**, one **at risk** (value passing through the Gulf of Aden); *Voyages*: open `BOC KAVERI` (critical: crude/refined cargo through the Gulf of Aden).
 2. `riskofficer` → *Voyages* → `BOC KAVERI` → Approve with a note → it stays *Awaiting approval* (critical needs a second person). `orgadmin` approves → *Approved*.
 3. `operator` → *Live map* → select a vessel → **Report suspicious vessel** (distress) → `cg.kochi` → *Case desk*: the P1 case counts down its SLA and **escalates automatically** if unacknowledged.
-4. `orgadmin` → *Organisation*: plan, usage vs. quotas, invoice estimate, users, API keys, webhooks. `kt.admin` sees *Starter* limits and no integrations.
-5. `admin` → *Customers*: change a plan, suspend an account, onboard a customer.
+4. `orgadmin` → *Overview* (what needs attention), then *Billing & contract*: open the overdue invoice, **Pay** it through the sandbox gateway, print it as PDF; *Compliance reports*: open the monthly pack. `kt.admin` sees *Starter* limits and no integrations.
+5. `cg.kochi` → *Service levels*: SLA compliance, outcomes, desk performance; file a **post-incident report** for a closed case.
+6. `admin` → *Revenue* (MRR, receivables), *Operations* (health, scheduled jobs, structured log, backup), *Customers* (change plan, suspend, onboard).
 
 ## Live data
 
@@ -88,7 +92,7 @@ npx wrangler d1 create orvms            # paste the printed database_id into wra
 npx wrangler secret put JWT_SECRET
 npx wrangler secret put SEED_PASSWORD   # >= 8 chars; password of the seeded demo accounts
 npx wrangler secret put AISSTREAM_API_KEY   # optional
-npx wrangler deploy
+npx wrangler deploy                      # production;  add --env staging for the staging environment
 ```
 The Worker applies database migrations itself on boot and seeds the demo tenants on first run. Upstream feeds run only while someone is connected (free-tier friendly).
 
@@ -98,20 +102,20 @@ PBKDF2-SHA256 passwords; signed expiring JWTs; role checks on every route; **ten
 
 ## Testing
 
-`npm test` runs 169 tests: pure-domain unit tests (scoring, state machine, SLA, ETA, quotas, webhook safety), the **repository contract suite on both storage implementations**, and the **whole business API suite on both** (tenant isolation, RBAC, quotas, four-eyes approvals, SLA escalation with a controllable clock, signed webhook delivery with retries, API-key metering, audit). `npm run test:coverage` for coverage.
+`npm test` runs 226 tests: pure-domain unit tests (scoring, state machine, SLA, ETA, quotas, webhook safety), the **repository contract suite on both storage implementations**, and the **whole business API suite on both** (tenant isolation, RBAC, quotas, four-eyes approvals, SLA escalation with a controllable clock, signed webhook delivery with retries, API-key metering, audit, invoicing and sandbox payment, contracts, report snapshots, retention, post-incident reports, operations and backup). `npm run test:coverage` for coverage.
 
 ## Project structure
 
 ```
 src/
   core/      geo, modelled zones (+ zones.data.json), engine (alert rules), hub (live state), simulator, auth
-  domain/    voyage scoring + state machine, supply-chain ETA/risk, case SLA, plans/quotas, webhooks, ports & routes
+  domain/    voyage scoring + state machine, supply-chain ETA/risk, case SLA, plans/quotas, billing, reports, webhooks, ports & routes
   data/      repository interface, MemoryRepo, SqlRepo, versioned migrations
-  services/  org/registry, voyages, shipments, cases, background runner, seed, context
-  api/       Hono app (core routes) + routes/enterprise.ts, rate limiter, CSV
+  services/  org/registry, voyages, shipments, cases, billing, reports, overview, ops, background runner, seed, context
+  api/       Hono app (core routes) + routes/enterprise.ts + routes/business.ts, rate limiter, CSV
   worker/    Cloudflare Worker + Durable Object, AIS parser, regions
-  web/       SPA: workspace, map, enterprise screens, reporting dialog, theme
-docs/        REQUIREMENTS.md, ARCHITECTURE.md, TECH_DECISIONS.md, openapi.yaml
+  web/       SPA: sidebar workspace, map, enterprise + business screens, charts, reporting dialog, theme
+docs/        REQUIREMENTS.md, ARCHITECTURE.md, TECH_DECISIONS.md, OPERATIONS.md, openapi.yaml
 tests/       unit/ (domain, engine, repo contract, geo…), api/ (core + enterprise), helpers/
 scripts/     build_zones.py, check_routes.py, setup-live.mjs, mock-aisstream.mjs …
 .github/workflows/  ci.yml (lint, types, tests, audit, build, CodeQL) · deploy-worker.yml
