@@ -13,7 +13,7 @@ export default tseslint.config(
       'no-implied-eval': 'error',
       'no-new-func': 'error',
       eqeqeq: ['error', 'always'],
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
       // Object-key lookups on typed records are intentional throughout; flagged as noise.
       'security/detect-object-injection': 'off',
     },

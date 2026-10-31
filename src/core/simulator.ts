@@ -58,6 +58,18 @@ const FLEET: Array<{ mmsi: string; name: string; type: number; lane: keyof typeo
   { mmsi: '419200110', name: 'BOC KRISHNA', type: 71, lane: 'chittagongColombo', reverse: true, phase: 0.45, sog: 13 },
 ];
 export const FLEET_MMSIS: string[] = FLEET.map((f) => f.mmsi);
+/** Fleet vessels with their static attributes (used to seed the fleet registry). */
+export const FLEET_VESSELS: Array<{ mmsi: string; name: string; type: number }> = FLEET.map((f) => ({ mmsi: f.mmsi, name: f.name, type: f.type }));
+
+/** A second, smaller customer fleet, to demonstrate tenant isolation. */
+export const KT_FLEET_NAME = 'Konkan Tankers Pvt Ltd';
+const KT_FLEET: Array<{ mmsi: string; name: string; type: number; lane: keyof typeof LANES; reverse: boolean; phase: number; sog: number }> = [
+  { mmsi: '419400101', name: 'KONKAN VIKRAM', type: 80, lane: 'mumbaiGulf', reverse: false, phase: 0.4, sog: 12 },
+  { mmsi: '419400102', name: 'KONKAN SAGAR', type: 81, lane: 'mumbaiKandla', reverse: false, phase: 0.55, sog: 11 },
+  { mmsi: '419400103', name: 'KONKAN SHAKTI', type: 82, lane: 'adenMumbai', reverse: true, phase: 0.3, sog: 13 },
+];
+export const KT_FLEET_VESSELS: Array<{ mmsi: string; name: string; type: number }> = KT_FLEET.map((f) => ({ mmsi: f.mmsi, name: f.name, type: f.type }));
+export const KT_FLEET_MMSIS: string[] = KT_FLEET.map((f) => f.mmsi);
 
 /** Lane traffic: lane, number of vessels, base speed (kn). */
 const LANE_TRAFFIC: Array<[keyof typeof LANES, number, number]> = [
@@ -130,6 +142,11 @@ function buildFleet(): SimVessel[] {
 
   // the operator's fleet
   for (const f of FLEET) {
+    const lane = LANES[f.lane] as LatLon[];
+    fleet.push({ mmsi: f.mmsi, name: f.name, sog: f.sog, shipType: f.type, behavior: 'lane', lane: f.reverse ? [...lane].reverse() : lane, phase: f.phase, reportEverySec: 15 });
+  }
+
+  for (const f of KT_FLEET) {
     const lane = LANES[f.lane] as LatLon[];
     fleet.push({ mmsi: f.mmsi, name: f.name, sog: f.sog, shipType: f.type, behavior: 'lane', lane: f.reverse ? [...lane].reverse() : lane, phase: f.phase, reportEverySec: 15 });
   }

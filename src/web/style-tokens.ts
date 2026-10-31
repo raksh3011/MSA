@@ -46,6 +46,9 @@ export const RULE_GROUP: Record<string, 'boundary' | 'zones' | 'integrity' | 'ot
   ais_gap: 'integrity',
   position_jump: 'integrity',
   user_report: 'other',
+  voyage_deviation: 'zones',
+  voyage_exposure: 'zones',
+  case_sla: 'other',
 };
 
 export const RULE_LABEL: Record<string, string> = {
@@ -62,4 +65,7 @@ export const RULE_LABEL: Record<string, string> = {
   position_jump: 'Position jump',
   geofence: 'Geofence',
   user_report: 'User report',
+  voyage_deviation: 'Voyage off route',
+  voyage_exposure: 'Unplanned risk exposure',
+  case_sla: 'Case SLA escalation',
 };

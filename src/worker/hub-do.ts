@@ -7,17 +7,24 @@
  */
 import { DurableObject } from 'cloudflare:workers';
 import { createApp } from '../api/app';
-import { verifyPassword, verifyToken } from '../core/auth';
+import { hashPassword, verifyPassword, verifyToken } from '../core/auth';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
-import { FLEET_MMSIS, FLEET_NAME, Simulator } from '../core/simulator';
-import { DESKS } from '../core/stations';
+import { Simulator } from '../core/simulator';
+import { MemoryRepo } from '../data/memory';
+import type { Repo } from '../data/repo';
+import { SqlRepo, migrate, type SqlDb } from '../data/sql';
+import { runBackground } from '../services/background';
+import { createServices, type Services } from '../services/context';
+import { SEED_USERNAMES, seedDemo } from '../services/seed';
 import type { DataSource, PositionReport, Role } from '../core/types';
 import { parseAisMessage } from './ais';
 import { boxesFor, inBox, INDIA_BOX, minGapMs, parseRegion } from './regions';
 
 export interface Env {
   HUB: DurableObjectNamespace;
+  /** Cloudflare D1 database for business records (organisations, registry, voyages, cases, integrations). Falls back to memory when absent. */
+  DB?: D1Database;
   JWT_SECRET: string;
   AISSTREAM_API_KEY?: string;
   /** 'aisstream' | 'digitraffic' | 'simulated'. Default: aisstream when a key is set, otherwise simulated. */
@@ -39,6 +46,9 @@ const MAX_STATIC = 20_000;
 export class OrvmsHub extends DurableObject<Env> {
   private readonly hub = new Hub();
   private readonly app;
+  private readonly repo: Repo;
+  private readonly services: Services;
+  private backgroundRunning = false;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private upstream: WebSocket | undefined;
@@ -53,8 +63,13 @@ export class OrvmsHub extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.repo = env.DB ? new SqlRepo(env.DB as unknown as SqlDb) : new MemoryRepo();
+    if (!env.DB) console.warn('No D1 binding "DB": business records are kept in memory and lost on restart.');
+    this.services = createServices({ hub: this.hub, repo: this.repo, defer: (p) => ctx.waitUntil(p.catch(() => undefined)) });
     this.app = createApp({
       hub: this.hub,
+      repo: this.repo,
+      services: this.services,
       jwtSecret: env.JWT_SECRET,
       allowedOrigins: (env.ALLOWED_ORIGINS ?? '*').split(',').map((s) => s.trim()),
     });
@@ -64,15 +79,10 @@ export class OrvmsHub extends DurableObject<Env> {
     void ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<ReturnType<Hub['exportState']>>('state');
       if (saved) this.hub.importState(saved);
-      // Seed on first run, and re-seed when the SEED_PASSWORD secret has been rotated.
-      const admin = this.hub.users.get('admin');
-      if (!admin || !this.hub.users.has('cg.mumbai') || (this.env.SEED_PASSWORD && !(await verifyPassword(this.env.SEED_PASSWORD, admin.passwordHash)))) await this.seedUsers();
-      // Make sure the demo operator manages the company fleet (also for state saved by an earlier version).
-      const op = this.hub.users.get('operator');
-      if (op) {
-        op.fleetName ??= FLEET_NAME;
-        if (this.hub.watchlistOf('operator').length === 0) for (const mmsi of FLEET_MMSIS) this.hub.watch('operator', mmsi);
-      }
+      if (env.DB) await migrate(env.DB as unknown as SqlDb);
+      await this.seedAndRotate();
+      // open "unidentified boat" reports must be visible on the map again after a restart
+      this.hub.restoreContacts((await this.repo.cases.listOpen()).filter((c) => c.manual).map((c) => ({ mmsi: c.mmsi, vesselName: c.vesselName, lat: c.lat, lon: c.lon, ts: c.createdAt })));
       this.hub.onPersist = () => this.scheduleSave();
     });
   }
@@ -84,18 +94,19 @@ export class OrvmsHub extends DurableObject<Env> {
     return 'simulated';
   }
 
-  private async seedUsers(): Promise<void> {
+  /** Seed demo organisations/users on first run; apply a rotated SEED_PASSWORD to the seeded accounts. */
+  private async seedAndRotate(): Promise<void> {
     const pw = this.env.SEED_PASSWORD;
     if (!pw || pw.length < 8) {
-      console.warn('SEED_PASSWORD secret missing or too short: no users created. Set it with `wrangler secret put SEED_PASSWORD`.');
+      console.warn('SEED_PASSWORD secret missing or too short: no demo users created. Set it with `wrangler secret put SEED_PASSWORD`.');
       return;
     }
-    await this.hub.addUser('admin', pw, 'admin', 'Administrator');
-    await this.hub.addUser('analyst', pw, 'analyst', 'Maritime Analyst');
-    await this.hub.addUser('operator', pw, 'operator', 'Fleet Manager', undefined, FLEET_NAME);
-    for (const mmsi of FLEET_MMSIS) this.hub.watch('operator', mmsi);
-    // Coast Guard controllers: one analyst account per regional HQ so reports route to a named person/desk
-    for (const d of DESKS) await this.hub.addUser(`cg.${d.id}`, pw, 'analyst', `CG Controller - ${d.name}`, d.id);
+    await seedDemo(this.services, pw);
+    const admin = this.hub.users.get('admin');
+    if (admin && !(await verifyPassword(pw, admin.passwordHash))) {
+      const hash = await hashPassword(pw);
+      for (const u of this.hub.users.values()) if (SEED_USERNAMES.includes(u.username)) u.passwordHash = hash;
+    }
   }
 
   private scheduleSave(): void {
@@ -163,6 +174,10 @@ export class OrvmsHub extends DurableObject<Env> {
     if (viewers.length === 0 && Date.now() - this.lastActivity > IDLE_STOP_MS) {
       this.stop();
       return;
+    }
+    if (!this.backgroundRunning) {
+      this.backgroundRunning = true;
+      this.ctx.waitUntil(runBackground(this.services).catch((e) => console.error('background run failed', e)).finally(() => { this.backgroundRunning = false; }));
     }
     if (this.sim) {
       this.stepSim(this.sim);

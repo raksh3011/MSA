@@ -66,7 +66,10 @@ export type RuleId =
   | 'loitering'
   | 'position_jump'
   | 'geofence'
-  | 'user_report';
+  | 'user_report'
+  | 'voyage_deviation'
+  | 'voyage_exposure'
+  | 'case_sla';
 
 export interface Alert {
   id: string;
@@ -86,7 +89,12 @@ export interface Alert {
   note?: string;
 }
 
-export type Role = 'admin' | 'analyst' | 'operator';
+/** admin = platform owner; analyst = Coast Guard; operator / risk_officer / org_admin = shipping-company staff. */
+export type Role = 'admin' | 'analyst' | 'operator' | 'risk_officer' | 'org_admin';
+
+/** Roles that belong to a shipping-company tenant (their data is scoped to the organisation). */
+export const COMPANY_ROLES: readonly Role[] = ['operator', 'risk_officer', 'org_admin'];
+export const isCompanyRole = (r: Role): boolean => COMPANY_ROLES.includes(r);
 
 export interface User {
   username: string;
@@ -96,6 +104,8 @@ export interface User {
   station?: string;
   /** company whose fleet this operator manages */
   fleetName?: string;
+  /** organisation (tenant) this user belongs to */
+  orgId?: string;
   /** PBKDF2 record: `iterations$saltB64$hashB64` */
   passwordHash: string;
 }
@@ -106,6 +116,7 @@ export interface PublicUser {
   displayName: string;
   station?: string;
   fleetName?: string;
+  orgId?: string;
 }
 
 export type IncidentCategory = 'suspicious_behaviour' | 'unidentified_vessel' | 'ais_spoofing' | 'illegal_activity' | 'distress' | 'other';

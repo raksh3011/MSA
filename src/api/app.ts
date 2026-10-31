@@ -8,13 +8,25 @@ import { hashPassword, signToken, verifyPassword, verifyToken, type TokenClaims 
 import { isValidCoord } from '../core/geo';
 import type { Hub } from '../core/hub';
 import { STATIONS } from '../core/stations';
-import type { Alert, IncidentCategory, Policy, Role } from '../core/types';
+import { isCompanyRole, type Alert, type Policy, type Role } from '../core/types';
+import type { Repo } from '../data/repo';
+import type { FetchLike } from '../domain/webhooks';
+import { createServices, type Services } from '../services/context';
+import { fleetMmsis, orgIdOf } from '../services/org';
+import { registerEnterpriseRoutes } from './routes/enterprise';
 import { BOUNDARIES, FOREIGN_WATERS, HIGH_RISK_ZONES, ZONES_META } from '../core/zones';
 import { RateLimiter } from './ratelimit';
 import { alertsToCsv } from './csv';
 
 export interface AppDeps {
   hub: Hub;
+  /** business-record storage (organisations, registry, voyages, cases, integrations) */
+  repo: Repo;
+  /** share one Services instance with the background runner (optional; created from the other deps otherwise) */
+  services?: Services;
+  fetch?: FetchLike;
+  allowInsecureWebhooks?: boolean;
+  defer?: (work: Promise<unknown>) => void;
   jwtSecret: string;
   /** allowed CORS origins; ['*'] allows any (safe: bearer tokens, no cookies) */
   allowedOrigins?: string[];
@@ -26,12 +38,11 @@ type Env = { Variables: { claims: TokenClaims } };
 const MMSI_RE = /^\d{9}$/;
 const ALERT_STATUSES = new Set(['open', 'acknowledged', 'resolved']);
 const SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
-const INCIDENT_CATEGORIES = new Set<IncidentCategory>(['suspicious_behaviour', 'unidentified_vessel', 'ais_spoofing', 'illegal_activity', 'distress', 'other']);
-const INCIDENT_STATUSES = new Set(['acknowledged', 'investigating', 'closed']);
 
 export function createApp(deps: AppDeps): Hono<Env> {
   const { hub, jwtSecret } = deps;
   const now = deps.now ?? Date.now;
+  const services = deps.services ?? createServices({ hub, repo: deps.repo, now, fetch: deps.fetch, allowInsecureWebhooks: deps.allowInsecureWebhooks ?? false, defer: deps.defer });
   const app = new Hono<Env>();
   const loginLimiter = new RateLimiter(10, 60_000);
   const reportLimiter = new RateLimiter(10, 60_000);
@@ -79,7 +90,12 @@ export function createApp(deps: AppDeps): Hono<Env> {
     }
   };
 
-  const visibleAlerts = (claims: TokenClaims): Alert[] => hub.alertsFor(claims.role, claims.sub);
+  /** Company users see alerts for their organisation's fleet (registry) and personal set; Coast Guard / platform see all. */
+  const visibleAlerts = async (claims: TokenClaims): Promise<Alert[]> => {
+    if (!isCompanyRole(claims.role)) return hub.alerts;
+    const orgId = orgIdOf(services, claims.sub);
+    return hub.alertsFor(claims.role, claims.sub, orgId ? await fleetMmsis(services, orgId) : undefined);
+  };
 
   // ── public ─────────────────────────────────────────────────────────────────
   app.get('/api/health', (c) =>
@@ -138,7 +154,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   // ── alerts ─────────────────────────────────────────────────────────────────
-  app.get('/api/alerts', requireAuth(), (c) => {
+  app.get('/api/alerts', requireAuth(), async (c) => {
     const claims = c.get('claims');
     const status = c.req.query('status');
     const severity = c.req.query('severity');
@@ -146,7 +162,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       return c.json({ error: 'Invalid status or severity filter' }, 400);
     }
     const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') ?? 100) || 100));
-    const list = visibleAlerts(claims)
+    const list = (await visibleAlerts(claims))
       .filter((a) => (!status || a.status === status) && (!severity || a.severity === severity))
       .slice(0, limit);
     return c.json({ alerts: list, total: list.length });
@@ -155,7 +171,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   const transition = (status: 'acknowledged' | 'resolved') => async (c: Context<Env>) => {
     const claims = c.get('claims');
     const id = c.req.param('id') ?? '';
-    const alert = visibleAlerts(claims).find((a) => a.id === id);
+    const alert = (await visibleAlerts(claims)).find((a) => a.id === id);
     if (!alert) return c.json({ error: 'Alert not found' }, 404);
     const body = await readJson(c);
     const note = typeof body?.note === 'string' ? body.note : undefined;
@@ -164,8 +180,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
   app.post('/api/alerts/:id/ack', requireAuth(), transition('acknowledged'));
   app.post('/api/alerts/:id/resolve', requireAuth(), transition('resolved'));
 
-  app.get('/api/reports/alerts.csv', requireAuth(), (c) => {
-    const csv = alertsToCsv(visibleAlerts(c.get('claims')));
+  app.get('/api/reports/alerts.csv', requireAuth(), async (c) => {
+    const csv = alertsToCsv(await visibleAlerts(c.get('claims')));
     return new Response(csv, {
       headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="orvms-alerts.csv"', 'Access-Control-Allow-Origin': '*' },
     });
@@ -189,52 +205,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
     return ok ? c.json({ removed: true }) : c.json({ error: 'Not on watchlist' }, 404);
   });
 
-  // ── reports of suspicious vessels, routed to the nearest Coast Guard controller ──
+  // ── enterprise modules: tenancy, registry, voyages, cases, integrations ────
   app.get('/api/stations', requireAuth(), (c) => c.json({ stations: STATIONS }));
-
-  app.post('/api/incidents', requireAuth(), async (c) => {
-    const claims = c.get('claims');
-    if (!reportLimiter.allow(claims.sub, now())) return c.json({ error: 'Too many reports. Try again in a minute.' }, 429);
-    const body = await readJson(c);
-    const category = body?.category;
-    const note = typeof body?.note === 'string' ? body.note.trim() : '';
-    const mmsi = body?.mmsi;
-    const lat = body?.lat;
-    const lon = body?.lon;
-    if (typeof category !== 'string' || !INCIDENT_CATEGORIES.has(category as IncidentCategory)) return c.json({ error: 'Invalid category' }, 400);
-    if (note.length > 500) return c.json({ error: 'note must be at most 500 characters' }, 400);
-    if (mmsi !== undefined && (typeof mmsi !== 'string' || !MMSI_RE.test(mmsi))) return c.json({ error: 'mmsi must be a 9-digit string' }, 400);
-    if (mmsi === undefined && (typeof lat !== 'number' || typeof lon !== 'number' || !isValidCoord(lat, lon))) {
-      return c.json({ error: 'Provide an mmsi, or a valid lat and lon for an unidentified contact' }, 400);
-    }
-    const result = hub.reportIncident(
-      { reporter: claims.sub, role: claims.role, category: category as IncidentCategory, note, mmsi: mmsi as string | undefined, lat: lat as number | undefined, lon: lon as number | undefined },
-      now(),
-    );
-    if ('error' in result) return c.json({ error: result.error }, 404);
-    return c.json(result, 201);
-  });
-
-  app.get('/api/incidents', requireAuth(), (c) => {
-    const claims = c.get('claims');
-    const status = c.req.query('status');
-    const station = c.req.query('station');
-    const list = hub
-      .incidentsFor(claims.role, claims.sub)
-      .filter((i) => (!status || i.status === status) && (!station || i.station.id === station))
-      .slice(0, 200);
-    return c.json({ incidents: list, total: list.length });
-  });
-
-  app.post('/api/incidents/:id/status', requireAuth('analyst', 'admin'), async (c) => {
-    const claims = c.get('claims');
-    const body = await readJson(c);
-    const status = body?.status;
-    const note = typeof body?.note === 'string' ? body.note : undefined;
-    if (typeof status !== 'string' || !INCIDENT_STATUSES.has(status)) return c.json({ error: 'status must be acknowledged, investigating or closed' }, 400);
-    const updated = hub.updateIncident(c.req.param('id'), status as 'acknowledged' | 'investigating' | 'closed', claims.sub, note, now());
-    return updated ? c.json(updated) : c.json({ error: 'Incident not found' }, 404);
-  });
+  registerEnterpriseRoutes(app, { s: services, requireAuth, readJson, reportLimiter });
 
   // ── synthetic traffic switch ───────────────────────────────────────────────
   app.put('/api/feed/synthetic', requireAuth('analyst', 'admin'), async (c) => {

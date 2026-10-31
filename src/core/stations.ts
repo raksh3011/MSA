@@ -61,7 +61,12 @@ export function stationById(id: string): Station | undefined {
 }
 
 /** The nearest Coast Guard station to a position, with the great-circle distance in nautical miles. */
-export function nearestStation(lat: number, lon: number): { station: Station; distanceNm: number } {
+export interface NearestStation {
+  station: Station;
+  distanceNm: number;
+}
+
+export function nearestStation(lat: number, lon: number): NearestStation {
   let best = STATIONS[0] as Station;
   let bestD = Infinity;
   for (const s of STATIONS) {

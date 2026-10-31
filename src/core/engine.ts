@@ -267,6 +267,9 @@ const COOLDOWN_MIN: Record<RuleId, number> = {
   position_jump: 60,
   geofence: 60,
   user_report: 0,
+  voyage_deviation: 360,
+  voyage_exposure: 360,
+  case_sla: 0,
 };
 
 /** Suppresses repeat alerts for the same (vessel, rule) inside a cooldown window. */

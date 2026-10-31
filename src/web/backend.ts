@@ -5,10 +5,13 @@
  * so the site is fully functional with no server at all.
  */
 import { createApp } from '../api/app';
+import { MemoryRepo } from '../data/memory';
+import { runBackground } from '../services/background';
+import { createServices, type Services } from '../services/context';
+import { seedDemo } from '../services/seed';
 import { DigitrafficClient } from '../core/digitraffic';
 import { Hub } from '../core/hub';
-import { FLEET_MMSIS, FLEET_NAME, Simulator } from '../core/simulator';
-import { DESKS } from '../core/stations';
+import { Simulator } from '../core/simulator';
 import type { Alert, DataSource, FeedInfo, PublicUser, Snapshot } from '../core/types';
 
 export type Mode = 'live' | 'demo';
@@ -39,6 +42,7 @@ const LIVE_POLL_MS = 10_000;
 
 interface DemoState {
   hub: Hub;
+  services?: Services;
   sim: Simulator;
   source: DataSource;
   dt: DigitrafficClient;
@@ -79,16 +83,15 @@ export class Backend {
       dt: new DigitrafficClient((u, i) => fetch(u, i)),
       lastLivePoll: 0,
     };
-    await hub.addUser('analyst', DEMO_PASSWORD, 'analyst', 'Demo Analyst (Coast Guard)');
-    await hub.addUser('operator', DEMO_PASSWORD, 'operator', 'Fleet Manager', undefined, FLEET_NAME);
-    await hub.addUser('admin', DEMO_PASSWORD, 'admin', 'Demo Administrator');
-    for (const d of DESKS) await hub.addUser(`cg.${d.id}`, DEMO_PASSWORD, 'analyst', `CG Controller - ${d.name}`, d.id);
-    // the demo operator manages a company fleet (distinct from the generic synthetic traffic)
-    for (const mmsi of FLEET_MMSIS) hub.watch('operator', mmsi);
     const secret = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
     // The API clock follows the data: simulated time for the simulator, wall-clock for real AIS.
-    const app = createApp({ hub, jwtSecret: secret, now: () => (demo.source === 'simulated' ? demo.sim.now : Date.now()) });
+    const clock = (): number => (demo.source === 'simulated' ? demo.sim.now : Date.now());
+    const repo = new MemoryRepo();
+    const services = createServices({ hub, repo, now: clock, allowInsecureWebhooks: true });
+    demo.services = services;
     Backend.warmSim(demo);
+    await seedDemo(services, DEMO_PASSWORD);
+    const app = createApp({ hub, repo, services, jwtSecret: secret, now: clock });
     return new Backend('demo', (u, i) => Promise.resolve(app.fetch(new Request(u, i))), 'http://orvms.local', demo);
   }
 
@@ -182,6 +185,7 @@ export class Backend {
     if (this.demo) {
       const d = this.demo;
       const timer = setInterval(() => {
+        if (d.services) void runBackground(d.services).catch(() => undefined);
         if (d.source === 'simulated') Backend.stepSim(d);
         else {
           Backend.stepSynthetic(d);

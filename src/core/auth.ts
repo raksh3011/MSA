@@ -73,7 +73,7 @@ export async function verifyToken(token: string, secret: string, nowMs = Date.no
     const claims = JSON.parse(new TextDecoder().decode(unb64url(body))) as TokenClaims;
     if (typeof claims.sub !== 'string' || typeof claims.exp !== 'number') return null;
     if (claims.exp * 1000 < nowMs) return null;
-    if (claims.role !== 'admin' && claims.role !== 'analyst' && claims.role !== 'operator') return null;
+    if (!['admin', 'analyst', 'operator', 'risk_officer', 'org_admin'].includes(claims.role)) return null;
     return claims;
   } catch {
     return null;

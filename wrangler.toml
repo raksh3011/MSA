@@ -16,6 +16,14 @@ class_name = "OrvmsHub"
 tag = "v1"
 new_sqlite_classes = ["OrvmsHub"]
 
+# Relational database for business records. Local `wrangler dev` creates it automatically; for a real deploy run
+#   wrangler d1 create orvms
+# and paste the printed database_id below. The Worker applies migrations itself on boot.
+[[d1_databases]]
+binding = "DB"
+database_name = "orvms"
+database_id = "00000000-0000-0000-0000-000000000000"
+
 [vars]
 ALLOWED_ORIGINS = "*"
 # aisstream (needs AISSTREAM_API_KEY) | digitraffic (real Baltic AIS, no key) | simulated (Indian Ocean scenarios)
