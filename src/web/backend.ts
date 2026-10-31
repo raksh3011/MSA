@@ -1,20 +1,6 @@
-/**
- * Backend abstraction. "live": the deployed Worker (REST + WebSocket).
- * "demo": the very same API app and risk engine running inside the browser, fed either by the
- * deterministic simulator (Indian Ocean scenarios) or by real, keyless live AIS (Digitraffic, Baltic Sea) —
- * so the site is fully functional with no server at all.
- */
-import { createApp } from '../api/app';
-import { MemoryRepo } from '../data/memory';
-import { runBackground } from '../services/background';
-import { createServices, type Services } from '../services/context';
-import { seedDemo } from '../services/seed';
-import { DigitrafficClient } from '../core/digitraffic';
-import { Hub } from '../core/hub';
-import { Simulator } from '../core/simulator';
+/** Client for the deployed ORVMS server (REST + WebSocket). All data and business logic live server-side. */
 import type { Alert, DataSource, FeedInfo, PublicUser, Snapshot } from '../core/types';
 
-export type Mode = 'live' | 'demo';
 export interface Session {
   token: string;
   user: PublicUser;
@@ -36,114 +22,19 @@ export interface FeedStatus {
   error?: string;
 }
 
-export const DEMO_PASSWORD = 'demo1234';
 const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
-const LIVE_POLL_MS = 10_000;
-
-interface DemoState {
-  hub: Hub;
-  services?: Services;
-  sim: Simulator;
-  source: DataSource;
-  dt: DigitrafficClient;
-  lastLivePoll: number;
-  /** real-time synthetic India traffic blended into a live feed */
-  synth?: Simulator;
-  error?: string;
-}
 
 export class Backend {
-  private constructor(
-    readonly mode: Mode,
-    private readonly fetcher: (url: string, init?: RequestInit) => Promise<Response>,
-    private readonly base: string,
-    private readonly demo?: DemoState,
-  ) {}
+  private constructor(private readonly base: string) {}
 
-  static async connect(forceDemo = false): Promise<Backend> {
-    if (!forceDemo) {
-      try {
-        const res = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(4000) });
-        const body = (await res.json()) as { status?: string };
-        if (res.ok && body.status === 'ok') return new Backend('live', (u, i) => fetch(u, i), API_BASE);
-      } catch {
-        /* no backend reachable: fall through to demo */
-      }
-    }
-    return Backend.createDemo();
-  }
-
-  private static async createDemo(): Promise<Backend> {
-    const hub = new Hub();
-    const sim = new Simulator();
-    const demo: DemoState = {
-      hub,
-      sim,
-      source: 'simulated',
-      dt: new DigitrafficClient((u, i) => fetch(u, i)),
-      lastLivePoll: 0,
-    };
-    const secret = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
-    // The API clock follows the data: simulated time for the simulator, wall-clock for real AIS.
-    const clock = (): number => (demo.source === 'simulated' ? demo.sim.now : Date.now());
-    const repo = new MemoryRepo();
-    const services = createServices({ hub, repo, now: clock, allowInsecureWebhooks: true });
-    demo.services = services;
-    Backend.warmSim(demo);
-    await seedDemo(services, DEMO_PASSWORD);
-    const app = createApp({ hub, repo, services, jwtSecret: secret, now: clock });
-    return new Backend('demo', (u, i) => Promise.resolve(app.fetch(new Request(u, i))), 'http://orvms.local', demo);
-  }
-
-  private static warmSim(d: DemoState): void {
-    for (let i = 0; i < 45; i++) Backend.stepSim(d); // warm start so the first screen has history
-  }
-
-  /** Blend (or remove) real-time synthetic India traffic according to the hub's synthetic switch. */
-  private static stepSynthetic(d: DemoState): void {
-    if (!d.hub.feed.synthetic) {
-      d.synth = undefined;
-      return;
-    }
-    const now = Date.now();
-    d.synth ??= new Simulator(7, now);
-    for (const r of d.synth.tick(now)) d.hub.ingest(r, now);
-  }
-
-  private static stepSim(d: DemoState): void {
-    for (const r of d.sim.tick()) d.hub.ingest(r, d.sim.now);
-    d.hub.sweepGaps(d.sim.now);
-  }
-
-  /** Demo mode only: switch between the simulator and real live AIS. */
-  async setDemoSource(source: DataSource): Promise<void> {
-    const d = this.demo;
-    if (!d || d.source === source) return;
-    d.hub.resetFeed(source);
-    d.source = source;
-    d.error = undefined;
-    d.lastLivePoll = 0;
-    if (source === 'simulated') {
-      d.sim = new Simulator();
-      Backend.warmSim(d);
-    } else {
-      await this.pollLive(d);
-    }
-  }
-
-  get demoSource(): DataSource | undefined {
-    return this.demo?.source;
-  }
-
-  private async pollLive(d: DemoState): Promise<void> {
-    d.lastLivePoll = Date.now();
+  /** Resolves to a backend when the server answers its health check, otherwise null. */
+  static async connect(): Promise<Backend | null> {
     try {
-      const now = Date.now();
-      for (const r of await d.dt.poll(now)) d.hub.ingest(r, now);
-      d.hub.sweepGaps(now);
-      d.error = undefined;
-    } catch (e) {
-      d.error = e instanceof Error ? e.message : 'live feed unavailable';
+      const res = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(6000) });
+      const body = (await res.json()) as { status?: string };
+      return res.ok && body.status === 'ok' ? new Backend(API_BASE) : null;
+    } catch {
+      return null;
     }
   }
 
@@ -151,7 +42,7 @@ export class Backend {
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const res = await this.fetcher(`${this.base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch(`${this.base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const ct = res.headers.get('content-type') ?? '';
     const data = (ct.includes('json') ? await res.json() : await res.text()) as T;
     return { status: res.status, data };
@@ -177,25 +68,11 @@ export class Backend {
       const d = await this.fetchOnce(session);
       if (d) {
         onData(d);
-        onStatus({ online: true, error: this.demo?.error });
+        onStatus({ online: true });
       } else onStatus({ online: false });
     };
 
     void poll();
-    if (this.demo) {
-      const d = this.demo;
-      const timer = setInterval(() => {
-        if (d.services) void runBackground(d.services).catch(() => undefined);
-        if (d.source === 'simulated') Backend.stepSim(d);
-        else {
-          Backend.stepSynthetic(d);
-          if (Date.now() - d.lastLivePoll >= LIVE_POLL_MS) void this.pollLive(d);
-        }
-        void poll();
-      }, 3000);
-      return () => clearInterval(timer);
-    }
-
     let ws: WebSocket | undefined;
     let closed = false;
     let retry = 2000;

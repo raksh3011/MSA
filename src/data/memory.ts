@@ -3,7 +3,7 @@ import type { CaseFilter, Repo } from './repo';
 
 const clone = <T>(x: T): T => structuredClone(x);
 
-/** In-memory repository: used by tests and the in-browser demo. Stores copies so callers cannot mutate state by accident. */
+/** In-memory repository: used by tests. Stores copies so callers cannot mutate state by accident. */
 export class MemoryRepo implements Repo {
   private orgMap = new Map<string, Organization>();
   private registryMap = new Map<string, RegistryVessel>();

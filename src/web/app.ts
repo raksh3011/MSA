@@ -322,30 +322,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
 
   function renderSource(): void {
     clear(sourceEl);
-    const src = data?.source ?? backend.demoSource ?? 'simulated';
-    if (backend.mode === 'demo') {
-      const sel = h(
-        'select',
-        { class: 'source-select', 'aria-label': 'Data source', onchange: async (e: Event) => {
-          const next = (e.target as HTMLSelectElement).value as DataSource;
-          await backend.setDemoSource(next);
-          data = null;
-          trails.clear();
-          selected = null;
-          const v = SOURCE_VIEW[next];
-          mapView.map.setView(v.center, v.zoom);
-          await refreshNow();
-          ctx.toast(next === 'simulated' ? 'Switched to simulated scenarios' : 'Connecting to live AIS…');
-        } },
-        h('option', { value: 'simulated' }, 'Simulated · Indian Ocean'),
-        h('option', { value: 'digitraffic' }, 'Live AIS · Baltic (real-time)'),
-        h('option', { value: '', disabled: true }, 'Live AIS · India / World: needs server + free key (see README)'),
-      ) as HTMLSelectElement;
-      sel.value = src;
-      sourceEl.append(sel);
-    } else {
-      sourceEl.append(h('span', { class: 'pill' }, SOURCE_LABEL[src]));
-    }
+    sourceEl.append(h('span', { class: 'pill' }, SOURCE_LABEL[data?.source ?? 'simulated']));
   }
 
   function renderStatus(): void {
@@ -550,7 +527,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
         h('label', { class: 'lyr' }, h('input', { type: 'checkbox', checked: layerPrefs[k], onchange: (e: Event) => { layerPrefs[k] = (e.target as HTMLInputElement).checked; saveJson('orvms_layers', layerPrefs); applyVesselPrefs(); } }), label),
       );
     }
-    const simulatedAll = (data?.source ?? backend.demoSource) === 'simulated';
+    const simulatedAll = data?.source === 'simulated';
     if (!isOperator && !simulatedAll) {
       body.append(
         h('label', { class: 'lyr', title: 'Adds ~85 synthetic vessels around India (real-time pace) to the live feed, clearly marked as synthetic' },

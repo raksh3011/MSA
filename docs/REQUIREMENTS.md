@@ -50,7 +50,7 @@
 |---|---|---|
 | NFR-1 Security | Passwords hashed (PBKDF2-SHA256); signed expiring tokens; role-based access on every route; per-tenant scoping in every tenant query; API keys stored as SHA-256 hashes; webhook targets restricted to public HTTPS; rate limiting on login and reporting; input validation; CSV formula-injection protection; no `innerHTML` in the UI. | RBAC/isolation tests, webhook URL tests, ESLint security plugin, CodeQL |
 | NFR-2 Data integrity | Business records are stored relationally with referential integrity, constraints and versioned migrations; workflow transitions are validated server-side. | SQL contract tests, migration tests, state-machine tests |
-| NFR-3 Portability | The same business logic runs on Cloudflare Workers + D1, in the browser (demo) and in tests, behind one repository interface. | Contract suite runs against `MemoryRepo` and `SqlRepo`; API suite runs against both |
+| NFR-3 Portability | The same business logic runs on Cloudflare Workers + D1 and in tests, behind one repository interface. | Contract suite runs against `MemoryRepo` and `SqlRepo`; API suite runs against both |
 | NFR-4 Performance | Live alerting must keep up with the feed: per-vessel throttling, bounded memory, viewport-efficient canvas rendering of thousands of vessels. | Throttle and eviction tests; manual check with the global live feed |
 | NFR-5 Availability / cost | Must run on free tiers without an always-on server; upstream feed connections only while users are connected. | Serverless architecture; documented limits |
 | NFR-6 Auditability | Every business action records actor, time and detail; approvals and case history are immutable timelines. | Audit tests |

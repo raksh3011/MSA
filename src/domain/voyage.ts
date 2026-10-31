@@ -1,6 +1,6 @@
 /**
  * Voyage risk management: route risk scoring, approval policy, the voyage state machine and live monitoring.
- * Everything here is a pure function so it can be unit-tested and reused by the API, the Worker and the browser demo.
+ * Everything here is a pure function so it can be unit-tested and reused by the API, the Worker and the tests.
  */
 import { destination, distanceNm, distanceToLineNm, bearingDeg, pointInPolygon, type LatLon } from '../core/geo';
 import type { Role } from '../core/types';

@@ -34,7 +34,7 @@ export interface Ctx {
   alertsFor(mmsi: string): Alert[];
   incidents(): readonly CaseRecord[];
   catalog(): Catalog | null;
-  /** the application clock: simulated time in demo mode, wall-clock otherwise */
+  /** the application clock: the server's clock as of the last feed frame */
   nowMs(): number;
   showRoute(waypoints: LatLon[] | null): void;
   refreshIncidents(): Promise<void>;

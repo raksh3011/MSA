@@ -1,4 +1,4 @@
-/** Shared domain types — used by the Worker, the in-browser demo engine and the UI. */
+/** Shared domain types — used by the Worker and the UI. */
 
 export type VesselCategory =
   | 'naval'

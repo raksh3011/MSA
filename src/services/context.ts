@@ -4,7 +4,7 @@ import type { FetchLike } from '../domain/webhooks';
 import { dispatchEvent } from '../domain/webhooks';
 import type { WebhookEvent } from '../domain/types';
 
-/** Everything the application services need. Built once per runtime (Worker, browser demo, tests). */
+/** Everything the application services need. Built once per runtime (Worker, tests). */
 export interface Services {
   hub: Hub;
   repo: Repo;

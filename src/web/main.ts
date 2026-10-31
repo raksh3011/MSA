@@ -1,6 +1,6 @@
 import './style.css';
 import { startApp } from './app';
-import { Backend, DEMO_PASSWORD, type Session } from './backend';
+import { Backend, type Session } from './backend';
 import { logoMark, NAME, SHORT, TAGLINE } from './brand';
 import { $, clear, h } from './dom';
 import { applyTheme, getTheme, toggleTheme } from './theme';
@@ -11,7 +11,9 @@ applyTheme(getTheme());
 
 async function boot(): Promise<void> {
   root.replaceChildren(h('div', { class: 'boot' }, 'Connecting…'));
-  backend = await Backend.connect(new URLSearchParams(location.search).has('demo'));
+  const connected = await Backend.connect();
+  if (!connected) return showOffline();
+  backend = connected;
   const saved = readSession();
   if (saved) {
     const check = await backend.request('GET', '/api/me', saved.token);
@@ -38,9 +40,26 @@ function launch(session: Session): void {
 }
 
 function modeBanner(): HTMLElement {
-  return backend.mode === 'live'
-    ? h('div', { class: 'banner live' }, `LIVE - connected to the ${SHORT} server`)
-    : h('div', { class: 'banner demo' }, 'DEMO MODE - runs entirely in your browser (no server). After signing in, choose simulated scenarios or real live AIS from the data-source menu.');
+  return h('div', { class: 'banner live' }, `LIVE - connected to the ${SHORT} server`);
+}
+
+function showOffline(): void {
+  root.className = '';
+  clear(root);
+  root.append(
+    h(
+      'main',
+      { class: 'login-wrap' },
+      h(
+        'div',
+        { class: 'login' },
+        h('div', { class: 'brand-lockup', style: 'margin-bottom:1rem' }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, NAME))),
+        h('p', { role: 'alert' }, `The ${SHORT} server is not reachable.`),
+        h('p', { class: 'muted' }, 'Start it with "npm run live" (local) or check the deployed Worker, then retry.'),
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => void boot() }, 'Retry')),
+      ),
+    ),
+  );
 }
 
 function themeButton(): HTMLElement {
@@ -83,8 +102,8 @@ function showLanding(): void {
 
 function showLogin(preset: string): void {
   root.className = '';
-  const user = h('input', { id: 'u', autocomplete: 'username', value: backend.mode === 'demo' ? preset : '', required: true });
-  const pass = h('input', { id: 'p', type: 'password', autocomplete: 'current-password', value: backend.mode === 'demo' ? DEMO_PASSWORD : '', required: true });
+  const user = h('input', { id: 'u', autocomplete: 'username', value: preset, required: true });
+  const pass = h('input', { id: 'p', type: 'password', autocomplete: 'current-password', required: true });
   const err = h('p', { class: 'error', role: 'alert' });
   const form = h(
     'form',
@@ -111,9 +130,7 @@ function showLogin(preset: string): void {
       },
     },
     h('div', { class: 'brand-lockup', style: 'margin-bottom:1rem' }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, 'Sign in'))),
-    backend.mode === 'demo'
-      ? h('div', {}, h('p', { class: 'muted' }, `Demo mode accounts - password "${DEMO_PASSWORD}":`), h('div', { class: 'demo-accounts' }, ...(['analyst', 'cg.mumbai', 'cg.gandhinagar', 'cg.kochi', 'cg.chennai', 'cg.portblair', 'operator', 'riskofficer', 'orgadmin', 'kt.operator', 'kt.admin', 'admin'] as const).map((n) => h('button', { type: 'button', class: 'btn small', onclick: () => { (user as HTMLInputElement).value = n; } }, n))))
-      : null,
+    h('div', {}, h('p', { class: 'muted' }, 'Seeded accounts (password is set by the server administrator):'), h('div', { class: 'demo-accounts' }, ...(['analyst', 'cg.mumbai', 'cg.gandhinagar', 'cg.kochi', 'cg.chennai', 'cg.portblair', 'operator', 'riskofficer', 'orgadmin', 'kt.operator', 'kt.admin', 'admin'] as const).map((n) => h('button', { type: 'button', class: 'btn small', onclick: () => { (user as HTMLInputElement).value = n; } }, n)))),
     h('label', { for: 'u' }, 'Username'),
     user,
     h('label', { for: 'p' }, 'Password'),

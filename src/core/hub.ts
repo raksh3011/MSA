@@ -1,7 +1,7 @@
 /**
  * Hub — the platform-independent heart of ORVMS: vessel state, risk engine,
  * alert lifecycle, watchlists, geofences, audit trail. The Worker's Durable Object
- * and the in-browser demo both wrap exactly this class.
+ * wraps exactly this class.
  */
 import { hashPassword } from './auth';
 import { DEFAULT_POLICY, Deduper, classOf, evaluateGaps, evaluateVessel, type Finding, type RuleContext } from './engine';

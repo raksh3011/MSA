@@ -24,12 +24,13 @@ It links *risk at sea* (live and synthetic AIS, modelled maritime zones, graded 
 
 ```bash
 npm install
-npm run dev          # http://localhost:5173 — demo mode: the whole platform runs in your browser, no server
+npm run live         # build + server + local database + live feeds on http://localhost:8787
+npm run dev          # (second terminal) UI with hot reload on http://localhost:5173, proxied to the server above
 npm test             # 169 unit + API tests (business API runs against memory AND SQL storage)
 npm run lint && npm run typecheck && npm run build
 ```
 
-### Demo accounts (password `demo1234` in demo mode)
+### Seeded accounts (password = `SEED_PASSWORD` in `.dev.vars`, printed by `npm run live:setup`)
 
 | Account | Role | Organisation |
 |---|---|---|
@@ -71,7 +72,7 @@ Vessels are classed **Indian / foreign / unknown**. *Indian vessels:* `indian_cr
  SPA (TypeScript) ──REST/WebSocket──► Hono API ──► Application services ──► Pure domain logic
                                                        │                    (risk, voyage rules, ETA, SLA, plans)
                                                        ▼
-                                          Repository interface ──► MemoryRepo (browser demo, tests)
+                                          Repository interface ──► MemoryRepo (tests)
                                                                 └─► SqlRepo ──► Cloudflare D1 / SQLite (migrated on boot)
  Live feeds ─► adapters ─► Hub (vessel state + alerts, Durable Object) ─► background runner ─► webhooks (HMAC, retries)
 ```
@@ -79,9 +80,7 @@ Layers: `core/` (geo, zones, engine, hub) → `domain/` (voyage, supply chain, c
 
 ## Deploy for free
 
-**A — GitHub Pages (demo mode, GitHub account only):** push, Settings → Pages → *GitHub Actions*; `.github/workflows/pages.yml` publishes.
-
-**B — Cloudflare Workers Free (real backend + database):**
+**Cloudflare Workers Free (backend + database + UI):**
 ```bash
 npm run build
 npx wrangler login
@@ -115,5 +114,5 @@ src/
 docs/        REQUIREMENTS.md, ARCHITECTURE.md, TECH_DECISIONS.md, openapi.yaml
 tests/       unit/ (domain, engine, repo contract, geo…), api/ (core + enterprise), helpers/
 scripts/     build_zones.py, check_routes.py, setup-live.mjs, mock-aisstream.mjs …
-.github/workflows/  ci.yml (lint, types, tests, audit, build, CodeQL) · pages.yml · deploy-worker.yml
+.github/workflows/  ci.yml (lint, types, tests, audit, build, CodeQL) · deploy-worker.yml
 ```

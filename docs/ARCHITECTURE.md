@@ -92,7 +92,6 @@ erDiagram
 flowchart TB
   DEV["Developer"] -->|git push| GH["GitHub repository (main / dev)"]
   GH --> CI["GitHub Actions: lint, strict typecheck, 150+ tests, npm audit, build, CodeQL"]
-  CI -->|main| PAGES["GitHub Pages: static demo (in-browser engine)"]
   CI -->|manual| DEPLOY["wrangler deploy"]
   subgraph CF["Cloudflare (free tier)"]
     ASSETS["Static assets (SPA)"]

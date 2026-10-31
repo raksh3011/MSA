@@ -79,9 +79,7 @@ label { display: block; margin: .8em 0 .25em; color: var(--muted); font-size: .7
 
 .banner { padding: .4em 1em; font-size: .78rem; text-align: center; font-weight: 600; letter-spacing: .02em; }
 .banner.live { background: #07382d; color: var(--ok); }
-.banner.demo { background: #3a2c06; color: var(--warn); }
 :root[data-theme='light'] .banner.live { background: #d7f5e9; color: #066047; }
-:root[data-theme='light'] .banner.demo { background: #fdf0c9; color: #7a5200; }
 .boot { margin: auto; color: var(--muted); }
 
 /* ── landing ── */

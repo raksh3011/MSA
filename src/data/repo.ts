@@ -1,6 +1,6 @@
 /**
  * Repository layer: the single boundary between business logic and storage.
- * Two implementations: MemoryRepo (tests, in-browser demo) and SqlRepo (Cloudflare D1 / SQLite).
+ * Two implementations: MemoryRepo (tests) and SqlRepo (Cloudflare D1 / SQLite).
  * Every query for tenant data takes the organisation id, so cross-tenant access is impossible by construction.
  */
 import type { ApiKey, CaseRecord, CaseStatus, Delivery, Organization, RegistryVessel, Shipment, UsageMetric, Voyage, VoyageStatus, Webhook } from '../domain/types';
