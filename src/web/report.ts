@@ -1,6 +1,7 @@
 /** "Report suspicious vessel" dialog: routes the report to the nearest Coast Guard controller. */
 import { nearestStation } from '../core/stations';
-import type { Incident, IncidentCategory } from '../core/types';
+import type { IncidentCategory } from '../core/types';
+import type { CaseRecord } from '../domain/types';
 import type { Ctx } from './ctx';
 import { h } from './dom';
 
@@ -51,7 +52,7 @@ export function openReportDialog(ctx: Ctx, target: ReportTarget): void {
         const body = target.mmsi
           ? { mmsi: target.mmsi, category: category.value, note: note.value }
           : { lat: Number(target.lat.toFixed(4)), lon: Number(target.lon.toFixed(4)), category: category.value, note: note.value };
-        const res = await ctx.api<Incident & { error?: string }>('POST', '/api/incidents', body);
+        const res = await ctx.api<CaseRecord & { error?: string }>('POST', '/api/cases', body);
         (submit as HTMLButtonElement).disabled = false;
         if (res.status === 201) {
           close();

@@ -1,5 +1,18 @@
-import type { Alert, Geofence, Incident, Severity } from '../core/types';
+import type { LatLon } from '../core/geo';
+import type { Alert, Geofence, Severity } from '../core/types';
+import type { CaseRecord, CargoType, Plan, Port, RouteTemplate } from '../domain/types';
 import type { Backend, FeedData, Reply, Session } from './backend';
+
+/** Reference data served by /api/catalog. */
+export interface Catalog {
+  ports: Port[];
+  routes: RouteTemplate[];
+  plans: Plan[];
+  cargoTypes: CargoType[];
+  incoterms: string[];
+  closureCodes: string[];
+  webhookEvents: string[];
+}
 
 /** Everything the page modules need from the running workspace. */
 export interface Ctx {
@@ -19,7 +32,11 @@ export interface Ctx {
   rerenderPage(): void;
   toast(message: string, kind?: 'info' | 'ok' | 'warn' | 'crit', ms?: number): void;
   alertsFor(mmsi: string): Alert[];
-  incidents(): readonly Incident[];
+  incidents(): readonly CaseRecord[];
+  catalog(): Catalog | null;
+  /** the application clock: simulated time in demo mode, wall-clock otherwise */
+  nowMs(): number;
+  showRoute(waypoints: LatLon[] | null): void;
   refreshIncidents(): Promise<void>;
   reportVessel(mmsi: string): void;
 }

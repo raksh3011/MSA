@@ -1,18 +1,20 @@
 /** The authenticated workspace: header, KPI + alert queue, map with overlays, vessel detail, pages. */
 import { classifyZone, nearestBoundaryNm } from '../core/boundary';
 import { highRiskZoneOf } from '../core/engine';
-import type { Alert, DataSource, Geofence, Incident, Severity, VesselCategory, VesselClass } from '../core/types';
+import { isCompanyRole, type Alert, type DataSource, type Geofence, type Severity, type VesselCategory, type VesselClass } from '../core/types';
+import type { CaseRecord } from '../domain/types';
 import { Backend, type FeedData, type FeedStatus, type Session } from './backend';
 import { logoMark, SHORT, NAME } from './brand';
-import type { Ctx } from './ctx';
+import type { Catalog, Ctx } from './ctx';
+import { casesPage, orgPage, orgsAdminPage, registryPage, supplyChainPage, voyagesPage } from './enterprise';
 import { clear, fmtDateTime, fmtTime, h } from './dom';
 import { MapView, ZONE_LABEL, ZONE_STYLE, type ZoneKey } from './map';
-import { adminPage, analyticsPage, fleetPage, incidentsPage, zonesPage } from './pages';
+import { adminPage, analyticsPage, fleetPage, zonesPage } from './pages';
 import { openReportDialog } from './report';
 import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_GROUP, RULE_LABEL, SEVERITY_RANK } from './style-tokens';
 import { getTheme, toggleTheme } from './theme';
 
-type Tab = 'map' | 'fleet' | 'incidents' | 'analytics' | 'zones' | 'admin';
+type Tab = 'map' | 'supply' | 'voyages' | 'fleet' | 'incidents' | 'org' | 'analytics' | 'zones' | 'orgs' | 'admin';
 
 const SOURCE_LABEL: Record<DataSource, string> = {
   simulated: 'Simulated · Indian Ocean scenarios',
@@ -77,9 +79,10 @@ function ago(ts: number, ref: number): string {
 
 export function startApp(root: HTMLElement, backend: Backend, session: Session, onLogout: () => void): void {
   root.className = 'app';
-  const isOperator = session.user.role === 'operator';
+  const isOperator = isCompanyRole(session.user.role); // shipping-company staff (tenant users)
   const canManage = !isOperator;
-  let tab: Tab = isOperator ? 'fleet' : 'map';
+  let tab: Tab = isOperator ? 'supply' : 'map';
+  let catalog: Catalog | null = null;
   let data: FeedData | null = null;
   let selected: string | null = null;
   let status: FeedStatus = { online: true };
@@ -95,7 +98,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   const layerPrefs = loadJson<Record<ZoneKey | 'trails' | 'labels' | 'synthetic', boolean>>('orvms_layers', {
     territorial: true, contiguous: true, eez: true, foreign: true, boundary: true, highRisk: true, geofence: true, stations: true, trails: false, labels: true, synthetic: true,
   });
-  let incidents: Incident[] = [];
+  let incidents: CaseRecord[] = [];
   const knownIncidents = new Map<string, string>();
   let incidentsPrimed = false;
   const knownAlerts = new Set<string>();
@@ -177,6 +180,9 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     },
     alertsFor: (mmsi) => (data?.alerts ?? []).filter((a) => a.mmsi === mmsi),
     incidents: () => incidents,
+    catalog: () => catalog,
+    nowMs: () => data?.ts ?? Date.now(),
+    showRoute: (w) => mapView.showRoute(w),
     refreshIncidents: () => loadIncidents(),
     reportVessel: (mmsi) => {
       const v = data?.vessels.find((x) => x.mmsi === mmsi);
@@ -184,13 +190,18 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     },
   };
 
+  const role = session.user.role;
   const tabs: Array<{ id: Tab; label: string; show: boolean }> = [
     { id: 'map', label: 'Live map', show: true },
-    { id: 'fleet', label: isOperator ? 'My fleet' : 'Watchlist', show: true },
-    { id: 'incidents', label: isOperator ? 'My reports' : 'Incidents', show: true },
+    { id: 'supply', label: 'Supply chain', show: isOperator },
+    { id: 'voyages', label: 'Voyages', show: isOperator },
+    { id: 'fleet', label: isOperator ? 'Fleet' : 'Watchlist', show: role !== 'admin' },
+    { id: 'incidents', label: isOperator ? 'My reports' : 'Case desk', show: true },
+    { id: 'org', label: 'Organisation', show: isOperator },
     { id: 'analytics', label: 'Analytics', show: true },
-    { id: 'zones', label: 'Geofences', show: true },
-    { id: 'admin', label: 'Administration', show: session.user.role === 'admin' },
+    { id: 'zones', label: 'Geofences', show: !isOperator },
+    { id: 'orgs', label: 'Customers', show: role === 'admin' },
+    { id: 'admin', label: 'Administration', show: role === 'admin' },
   ];
 
   // Compact account menu: avatar button -> name, role, theme toggle and Sign out (always reachable at any width).
@@ -589,8 +600,12 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
     pageEl.classList.toggle('overlay', overlayTab);
     clear(pageEl);
     if (isMap) return mapView.invalidate();
-    if (tab === 'fleet') pageEl.append(fleetPage(ctx, () => void downloadCsv()));
-    else if (tab === 'incidents') pageEl.append(incidentsPage(ctx, session.user.station));
+    if (tab === 'fleet') pageEl.append(isOperator ? registryPage(ctx) : fleetPage(ctx, () => void downloadCsv()));
+    else if (tab === 'supply') pageEl.append(supplyChainPage(ctx));
+    else if (tab === 'voyages') pageEl.append(voyagesPage(ctx));
+    else if (tab === 'org') pageEl.append(orgPage(ctx));
+    else if (tab === 'orgs') pageEl.append(orgsAdminPage(ctx));
+    else if (tab === 'incidents') pageEl.append(casesPage(ctx, session.user.station));
     else if (tab === 'analytics') pageEl.append(analyticsPage(ctx));
     else if (tab === 'zones') {
       pageEl.append(zonesPage(ctx));
@@ -675,9 +690,9 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
 
   /** Poll incidents; controllers are told when a report is routed to their station, reporters when it is actioned. */
   async function loadIncidents(): Promise<void> {
-    const r = await ctx.api<{ incidents: Incident[] }>('GET', '/api/incidents');
+    const r = await ctx.api<{ cases: CaseRecord[] }>('GET', '/api/cases');
     if (r.status !== 200) return;
-    incidents = r.data.incidents ?? [];
+    incidents = r.data.cases ?? [];
     for (const i of incidents) {
       const before = knownIncidents.get(i.id);
       knownIncidents.set(i.id, i.status);
@@ -717,7 +732,7 @@ export function startApp(root: HTMLElement, backend: Backend, session: Session, 
   void (async () => {
     for (const k of ZONE_ORDER) mapView.setZoneVisible(k, layerPrefs[k]);
     applyVesselPrefs();
-    await Promise.all([loadWatch(), loadGeofences(), loadIncidents()]);
+    await Promise.all([loadWatch(), loadGeofences(), loadIncidents(), ctx.api<Catalog>('GET', '/api/catalog').then((c) => { if (c.status === 200) catalog = c.data; })]);
     renderAll();
     renderClock();
     stopFeed = backend.startFeed(session, onData, (s) => { status = s; renderStatus(); });

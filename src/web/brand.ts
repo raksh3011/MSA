@@ -1,6 +1,6 @@
 export const NAME = 'Ocean Risk and Vessel Monitoring System';
 export const SHORT = 'ORVMS';
-export const TAGLINE = 'One maritime picture for those who guard the sea, work it and fish it.';
+export const TAGLINE = 'A multi-tenant platform that links live maritime risk to voyages, shipments and customer commitments - for shipping companies and the Coast Guard.';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 

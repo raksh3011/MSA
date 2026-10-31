@@ -120,7 +120,6 @@ export interface PublicUser {
 }
 
 export type IncidentCategory = 'suspicious_behaviour' | 'unidentified_vessel' | 'ais_spoofing' | 'illegal_activity' | 'distress' | 'other';
-export type IncidentStatus = 'open' | 'acknowledged' | 'investigating' | 'closed';
 
 export interface Station {
   id: string;
@@ -128,33 +127,6 @@ export interface Station {
   kind: 'Regional HQ' | 'District HQ' | 'Station';
   lat: number;
   lon: number;
-}
-
-export interface IncidentEvent {
-  ts: number;
-  actor: string;
-  action: string;
-  note?: string;
-}
-
-/** A user report about a suspicious / unidentified vessel, routed to the nearest Coast Guard controller. */
-export interface Incident {
-  id: string;
-  ts: number;
-  reporter: string;
-  reporterRole: Role;
-  mmsi: string;
-  vesselName: string;
-  lat: number;
-  lon: number;
-  category: IncidentCategory;
-  note: string;
-  status: IncidentStatus;
-  /** nearest Coast Guard station at the time of the report */
-  station: { id: string; name: string; distanceNm: number; desk: string };
-  /** true when the contact was not on AIS and was added manually from a visual sighting */
-  manual: boolean;
-  history: IncidentEvent[];
 }
 
 export interface Geofence {

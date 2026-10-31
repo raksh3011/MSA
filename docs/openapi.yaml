@@ -1,0 +1,127 @@
+openapi: 3.0.3
+info:
+  title: ORVMS Integration API
+  version: 1.0.0
+  description: |
+    Machine-to-machine API for customer ERP / TMS systems. Authenticate with an API key created by your organisation
+    admin (`X-API-Key: orvms_...`). Keys are scoped (`read:fleet`, `read:alerts`, `read:voyages`, `write:voyages`,
+    `read:shipments`) and every call counts against the plan's monthly API quota (HTTP 402 when exhausted).
+    Outbound events are delivered to your webhooks signed with `X-ORVMS-Signature: sha256=HMAC_SHA256(secret, "<timestamp>.<body>")`
+    and `X-ORVMS-Timestamp`; reject deliveries older than a few minutes.
+servers:
+  - url: https://YOUR-ORVMS-HOST
+security:
+  - ApiKey: []
+paths:
+  /api/integration/v1/fleet:
+    get:
+      summary: Fleet registry with live position
+      description: Requires scope `read:fleet`.
+      responses:
+        '200': { description: Registry vessels joined with the latest live position, content: { application/json: { schema: { $ref: '#/components/schemas/FleetResponse' } } } }
+        '402': { $ref: '#/components/responses/QuotaOrPlan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/integration/v1/alerts:
+    get:
+      summary: Alerts about your fleet
+      description: Requires scope `read:alerts`.
+      responses:
+        '200': { description: Up to 200 most recent alerts for fleet vessels, content: { application/json: { schema: { type: object, properties: { alerts: { type: array, items: { $ref: '#/components/schemas/Alert' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/integration/v1/voyages:
+    get:
+      summary: Voyages with risk assessment and approval state
+      description: Requires scope `read:voyages`.
+      responses:
+        '200': { description: Voyages, content: { application/json: { schema: { type: object, properties: { voyages: { type: array, items: { $ref: '#/components/schemas/Voyage' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create a draft voyage
+      description: Requires scope `write:voyages`. The voyage is created as a draft; submission and approval stay in the ORVMS workflow.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VoyageInput' } } }
+      responses:
+        '201': { description: Draft voyage created, content: { application/json: { schema: { $ref: '#/components/schemas/Voyage' } } } }
+        '400': { description: Validation error }
+        '404': { description: Vessel is not in the fleet registry }
+  /api/integration/v1/shipments:
+    get:
+      summary: Supply-chain control tower
+      description: Requires scope `read:shipments`. Shipments with live ETA, delivery risk and value at risk, plus portfolio KPIs.
+      responses:
+        '200': { description: Overview, content: { application/json: { schema: { $ref: '#/components/schemas/ShipmentOverview' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    ApiKey: { type: apiKey, in: header, name: X-API-Key }
+  responses:
+    Forbidden: { description: Missing / invalid / revoked key, or missing scope }
+    QuotaOrPlan: { description: Plan does not include API access, or the monthly quota is exhausted }
+  schemas:
+    FleetResponse:
+      type: object
+      properties:
+        vessels:
+          type: array
+          items:
+            type: object
+            properties:
+              mmsi: { type: string, example: '419200101' }
+              imo: { type: string, nullable: true }
+              name: { type: string }
+              vesselType: { type: string }
+              flag: { type: string }
+              status: { type: string, enum: [active, retired] }
+              live: { type: object, nullable: true, properties: { lat: { type: number }, lon: { type: number }, sog: { type: number }, lastSeen: { type: integer } } }
+    Alert:
+      type: object
+      properties:
+        id: { type: string }
+        ruleId: { type: string, example: indian_critical_zone }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        mmsi: { type: string }
+        message: { type: string }
+        ts: { type: integer, description: epoch ms }
+    VoyageInput:
+      type: object
+      required: [mmsi, originPort, destinationPort, cargo, etd, eta]
+      properties:
+        mmsi: { type: string }
+        originPort: { type: string, example: INBOM }
+        destinationPort: { type: string, example: YEADE }
+        routeId: { type: string, example: mumbai-aden }
+        waypoints: { type: array, items: { type: array, items: { type: number }, minItems: 2, maxItems: 2 } }
+        cargo: { type: string, enum: [general, containers, bulk, crude_oil, refined_products, chemicals, lng_lpg, passengers] }
+        etd: { type: integer, description: epoch ms }
+        eta: { type: integer, description: epoch ms }
+    Voyage:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string, example: VY-202610-001 }
+        status: { type: string, enum: [draft, submitted, changes_requested, approved, rejected, active, completed, cancelled] }
+        assessment: { type: object, nullable: true, properties: { score: { type: integer }, level: { type: string, enum: [low, medium, high, critical] }, controls: { type: array, items: { type: string } } } }
+    ShipmentOverview:
+      type: object
+      properties:
+        summary: { type: object, properties: { inTransit: { type: integer }, valueInTransitInr: { type: number }, valueAtRiskInr: { type: number }, atRisk: { type: integer }, late: { type: integer }, unplanned: { type: integer } } }
+        shipments:
+          type: array
+          items:
+            type: object
+            properties:
+              reference: { type: string }
+              customer: { type: string }
+              deliveryRisk: { type: string, enum: [on_track, at_risk, late, unplanned] }
+              projectedEta: { type: integer, nullable: true }
+              requiredBy: { type: integer }
+              valueAtRiskInr: { type: number }
+x-webhook-events:
+  - alert.created
+  - voyage.status_changed
+  - voyage.deviation
+  - case.created
+  - case.escalated
+  - case.closed
+  - shipment.at_risk

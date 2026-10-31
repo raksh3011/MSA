@@ -131,6 +131,17 @@ export class MapView {
     this.map.on('mousemove', (e: L.LeafletMouseEvent) => handlers.onCursor(e.latlng.lat, e.latlng.lng));
   }
 
+  private route: L.Polyline | undefined;
+
+  /** Draw (or clear) a voyage route on the map and zoom to it. */
+  showRoute(waypoints: LatLon[] | null): void {
+    this.route?.remove();
+    this.route = undefined;
+    if (!waypoints || waypoints.length < 2) return;
+    this.route = L.polyline(waypoints, { color: '#f97316', weight: 4, dashArray: '10 6', opacity: 0.95 }).bindTooltip('Voyage route (template)', { sticky: true }).addTo(this.map);
+    this.map.fitBounds(this.route.getBounds().pad(0.15));
+  }
+
   setZoneVisible(key: ZoneKey, on: boolean): void {
     const g = this.zones[key];
     if (on) g.addTo(this.map);

@@ -68,12 +68,12 @@ function showLanding(): void {
       'main',
       { class: 'landing' },
       h('div', { class: 'land-top' }, h('div', { class: 'brand-lockup' }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, NAME))), themeButton()),
-      h('div', { class: 'hero' }, h('h1', {}, 'See risk at sea before it reaches the shore.'), h('p', { class: 'tagline' }, TAGLINE)),
+      h('div', { class: 'hero' }, h('h1', {}, 'Maritime risk intelligence for the supply chain.'), h('p', { class: 'tagline' }, TAGLINE)),
       h(
         'div',
         { class: 'personas' },
-        card('⚓', 'Coast Guard & Maritime Security', 'Analysts · watch officers', 'A live vessel picture with rule-based risk alerts, incoming public reports routed to the nearest controller, and a full audit trail.', ['EEZ, territorial-sea and boundary alerts', 'Dark-vessel and spoofing detection', 'Incident desk for reports, notes, geofences'], h('button', { class: 'btn primary', onclick: () => showLogin('analyst') }, 'Sign in as analyst')),
-        card('🚢', 'Fleet Operators', 'Tankers · cargo · container lines', 'Watch your own vessels and the risks around them, report suspicious vessels, and hand incident reports to insurers.', ['Private set of vessels, fleet-scoped alerts', 'Report suspicious or unidentified boats', 'CSV incident export'], h('button', { class: 'btn primary', onclick: () => showLogin('operator') }, 'Sign in as operator')),
+        card('⚓', 'Coast Guard & Maritime Security', 'Analysts · watch officers', 'A live vessel picture with graded alerts, and a case desk where reports are routed to the nearest controller and worked against SLAs.', ['EEZ, territorial-sea and boundary alerts', 'Dark-vessel and spoofing detection', 'Cases with priority, SLA timers and escalation'], h('button', { class: 'btn primary', onclick: () => showLogin('analyst') }, 'Sign in as analyst')),
+        card('🚢', 'Shipping & Supply-chain Teams', 'Operators · risk officers · org admins', 'Plan voyages with an automatic route risk assessment, get them approved, and see which customer deliveries are at risk - live.', ['Voyage approvals (four-eyes) and live route monitoring', 'Supply-chain control tower: ETA, delivery risk, cargo value exposed', 'Fleet registry, API keys, signed webhooks, plan & usage'], h('button', { class: 'btn primary', onclick: () => showLogin('operator') }, 'Sign in as operator')),
       ),
       h('p', { class: 'limits' }, 'Data limits: public AIS only shows vessels that transmit it. Small fishing boats and vessels that switch AIS off are often invisible, and AIS positions can be wrong or spoofed. Zones and boundaries are modelled from coastlines using UNCLOS distances and equidistance lines - they are not the official gazetted limits. ORVMS is decision support, not a navigation or legal-boundary tool.'),
       h('p', { class: 'footer' }, 'Map: Esri Ocean Basemap (GEBCO, NOAA). Coastlines: Natural Earth (public domain). Live AIS (Baltic): Fintraffic / digitraffic.fi, CC BY 4.0.'),
@@ -81,7 +81,7 @@ function showLanding(): void {
   );
 }
 
-function showLogin(preset: 'analyst' | 'operator' | 'admin'): void {
+function showLogin(preset: string): void {
   root.className = '';
   const user = h('input', { id: 'u', autocomplete: 'username', value: backend.mode === 'demo' ? preset : '', required: true });
   const pass = h('input', { id: 'p', type: 'password', autocomplete: 'current-password', value: backend.mode === 'demo' ? DEMO_PASSWORD : '', required: true });
@@ -112,7 +112,7 @@ function showLogin(preset: 'analyst' | 'operator' | 'admin'): void {
     },
     h('div', { class: 'brand-lockup', style: 'margin-bottom:1rem' }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, 'Sign in'))),
     backend.mode === 'demo'
-      ? h('div', {}, h('p', { class: 'muted' }, `Demo mode accounts - password "${DEMO_PASSWORD}":`), h('div', { class: 'demo-accounts' }, ...(['analyst', 'cg.mumbai', 'cg.gandhinagar', 'cg.kochi', 'cg.chennai', 'cg.portblair', 'operator', 'admin'] as const).map((n) => h('button', { type: 'button', class: 'btn small', onclick: () => { (user as HTMLInputElement).value = n; } }, n))))
+      ? h('div', {}, h('p', { class: 'muted' }, `Demo mode accounts - password "${DEMO_PASSWORD}":`), h('div', { class: 'demo-accounts' }, ...(['analyst', 'cg.mumbai', 'cg.gandhinagar', 'cg.kochi', 'cg.chennai', 'cg.portblair', 'operator', 'riskofficer', 'orgadmin', 'kt.operator', 'kt.admin', 'admin'] as const).map((n) => h('button', { type: 'button', class: 'btn small', onclick: () => { (user as HTMLInputElement).value = n; } }, n))))
       : null,
     h('label', { for: 'u' }, 'Username'),
     user,
