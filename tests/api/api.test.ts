@@ -1,0 +1,183 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createApp } from '../../src/api/app';
+import { PW, makeHarness, type Harness } from '../helpers/harness';
+
+let h: Harness;
+let hub: Harness['hub'];
+const tokens: Record<string, string> = {};
+const call = (...a: Parameters<Harness['call']>) => h.call(...a);
+const post = (...a: Parameters<Harness['post']>) => h.post(...a);
+const put = (...a: Parameters<Harness['put']>) => h.put(...a);
+
+beforeAll(async () => {
+  h = await makeHarness();
+  hub = h.hub;
+  for (const u of ['admin', 'analyst', 'operator', 'riskofficer', 'orgadmin']) tokens[u] = await h.as(u);
+  // vessels: an Indian fleet vessel of the demo operator (BOC), one foreign vessel in the Gulf of Aden
+  hub.ingest({ mmsi: '636000001', name: 'MV Intruder', lat: 13, lon: 48, sog: 12, shipType: 70, ts: 1000 }, 1000);
+  hub.ingest({ mmsi: '419200101', name: 'BOC ARAVALI', lat: 15, lon: 72, sog: 10, shipType: 80, ts: 1000 }, 1000);
+  hub.ingest({ mmsi: '419200101', name: 'BOC ARAVALI', lat: 15, lon: 72.1, sog: 10, shipType: 80, ts: 2000 }, 2000);
+});
+
+describe('health and public endpoints', () => {
+  it('GET /api/health returns 200 without auth', async () => {
+    const res = await call('/api/health');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'ok' });
+  });
+
+  it('GET /api/public/zones exposes boundary data', async () => {
+    const body = (await (await call('/api/public/zones')).json()) as { boundaries: unknown[]; highRisk: unknown[] };
+    expect(body.boundaries.length).toBeGreaterThan(3);
+    expect(body.highRisk.length).toBeGreaterThan(0);
+  });
+
+});
+
+describe('authentication', () => {
+  it('login returns a token and user for valid credentials', async () => {
+    const res = await post('/api/auth/login', { username: 'Admin', password: PW });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ user: { username: 'admin', role: 'admin' } });
+  });
+
+  it('login rejects wrong password with 401 and a generic message', async () => {
+    const res = await post('/api/auth/login', { username: 'admin', password: 'bad' });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Invalid credentials' });
+  });
+
+  it('login rejects unknown users identically', async () => {
+    expect((await post('/api/auth/login', { username: 'ghost', password: 'whatever1' })).status).toBe(401);
+  });
+
+  it('login rejects missing fields with 400', async () => {
+    expect((await post('/api/auth/login', { username: 'admin' })).status).toBe(400);
+  });
+
+  it('protected routes require a valid token', async () => {
+    expect((await call('/api/vessels')).status).toBe(401);
+    expect((await call('/api/vessels', { token: 'garbage.token.value' })).status).toBe(401);
+  });
+
+  it('rate-limits repeated login attempts', async () => {
+    const fresh = createApp({ hub, repo: h.repo, services: h.services, jwtSecret: 'test-secret' });
+    let last = 0;
+    for (let i = 0; i < 12; i++) {
+      const res = await fresh.request('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: 'x', password: 'y' }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      last = res.status;
+    }
+    expect(last).toBe(429);
+  });
+});
+
+describe('vessels and alerts', () => {
+  it('GET /api/vessels returns tracked vessels for authenticated users', async () => {
+    const res = await call('/api/vessels', { token: tokens.admin });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { total: number }).total).toBe(2);
+  });
+
+  it('GET /api/vessels/:mmsi validates, finds and 404s', async () => {
+    expect((await call('/api/vessels/abc', { token: tokens.admin })).status).toBe(400);
+    expect((await call('/api/vessels/419200101', { token: tokens.admin })).status).toBe(200);
+    expect((await call('/api/vessels/111111111', { token: tokens.admin })).status).toBe(404);
+  });
+
+  it('GET /api/alerts lists alerts and validates filters', async () => {
+    const res = await call('/api/alerts?severity=high', { token: tokens.analyst });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { total: number }).total).toBeGreaterThan(0);
+    expect((await call('/api/alerts?severity=bogus', { token: tokens.analyst })).status).toBe(400);
+  });
+
+  it('company users only see alerts about their own organisation fleet (and personal set)', async () => {
+    const mine = (await (await call('/api/alerts', { token: tokens.operator })).json()) as { alerts: Array<{ mmsi: string }> };
+    expect(mine.alerts.every((x) => x.mmsi === '419200101')).toBe(true); // BOC ARAVALI is in the BOC registry; the foreign vessel is not
+    const kt = (await (await call('/api/alerts', { token: await h.as('kt.operator') })).json()) as { total: number };
+    expect(kt.total).toBe(0); // another tenant sees none of it
+    expect((await post('/api/watchlist', { mmsi: '636000001' }, tokens.operator)).status).toBe(201); // personal set extends visibility
+    const after = (await (await call('/api/alerts', { token: tokens.operator })).json()) as { alerts: Array<{ mmsi: string }> };
+    expect(after.alerts.some((x) => x.mmsi === '636000001')).toBe(true);
+  });
+
+  it('acknowledges and resolves an alert, recording the actor', async () => {
+    const list = (await (await call('/api/alerts', { token: tokens.analyst })).json()) as { alerts: Array<{ id: string }> };
+    const id = list.alerts[0]!.id;
+    const ack = await post(`/api/alerts/${id}/ack`, { note: 'looking' }, tokens.analyst);
+    expect(ack.status).toBe(200);
+    expect(await ack.json()).toMatchObject({ status: 'acknowledged', handledBy: 'analyst', note: 'looking' });
+    expect(((await (await post(`/api/alerts/${id}/resolve`, {}, tokens.analyst)).json()) as { status: string }).status).toBe('resolved');
+    expect((await post('/api/alerts/does-not-exist/ack', {}, tokens.analyst)).status).toBe(404);
+  });
+
+  it('exports alerts as CSV', async () => {
+    const res = await call('/api/reports/alerts.csv', { token: tokens.analyst });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+    expect((await res.text()).split('\n')[0]).toContain('severity');
+  });
+});
+
+describe('watchlist, geofences, policy, audit', () => {
+  it('POST /api/watchlist rejects invalid MMSI with 400', async () => {
+    expect((await post('/api/watchlist', { mmsi: '12' }, tokens.operator)).status).toBe(400);
+    expect((await post('/api/watchlist', {}, tokens.operator)).status).toBe(400);
+  });
+
+  it('removes watchlist entries', async () => {
+    expect((await call('/api/watchlist/636000001', { method: 'DELETE', token: tokens.operator })).status).toBe(200);
+    expect((await call('/api/watchlist/636000001', { method: 'DELETE', token: tokens.operator })).status).toBe(404);
+  });
+
+  it('geofence creation is restricted to analysts/admins and validated', async () => {
+    const body = { name: 'Mumbai Port', lat: 18.9, lon: 72.8, radiusNm: 25 };
+    expect((await post('/api/geofences', body, tokens.operator)).status).toBe(403);
+    expect((await post('/api/geofences', { ...body, radiusNm: 9999 }, tokens.analyst)).status).toBe(400);
+    const created = await post('/api/geofences', body, tokens.analyst);
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    expect((await call(`/api/geofences/${id}`, { method: 'DELETE', token: tokens.analyst })).status).toBe(200);
+    expect((await call(`/api/geofences/${id}`, { method: 'DELETE', token: tokens.analyst })).status).toBe(404);
+  });
+
+  it('only admins can change policy, and values are range-checked', async () => {
+    expect((await put('/api/policy', { highSpeedKn: 30 }, tokens.analyst)).status).toBe(403);
+    expect((await put('/api/policy', { highSpeedKn: 999 }, tokens.admin)).status).toBe(400);
+    const ok = await put('/api/policy', { highSpeedKn: 30, flagsOfInterest: ['Somalia'] }, tokens.admin);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ highSpeedKn: 30, flagsOfInterest: ['Somalia'] });
+  });
+
+  it('audit log is admin-only and records actions', async () => {
+    expect((await call('/api/audit', { token: tokens.analyst })).status).toBe(403);
+    const res = await call('/api/audit', { token: tokens.admin });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { audit: unknown[] }).audit.length).toBeGreaterThan(0);
+  });
+
+  it('unknown routes return JSON 404 and security headers are set', async () => {
+    const res = await call('/api/nope');
+    expect(res.status).toBe(404);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+});
+
+describe('synthetic feed switch', () => {
+  it('analysts can switch the synthetic traffic feed; company users cannot', async () => {
+    expect((await put('/api/feed/synthetic', { enabled: true }, tokens.operator)).status).toBe(403);
+    expect((await put('/api/feed/synthetic', { enabled: 'yes' }, tokens.analyst)).status).toBe(400);
+    expect((await put('/api/feed/synthetic', { enabled: true }, tokens.analyst)).status).toBe(200);
+    expect(hub.feed.synthetic).toBe(true);
+  });
+
+  it('lists Coast Guard stations for authenticated users only', async () => {
+    expect((await call('/api/stations')).status).toBe(401);
+    const res = await call('/api/stations', { token: tokens.operator });
+    expect(((await res.json()) as { stations: unknown[] }).stations.length).toBeGreaterThan(10);
+  });
+});

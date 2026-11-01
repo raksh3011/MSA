@@ -1,0 +1,36 @@
+{
+  "name": "orvms",
+  "version": "3.0.0",
+  "private": true,
+  "description": "ORVMS - Ocean Risk and Vessel Monitoring System (serverless, zero-cost hosting)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "deploy:worker": "wrangler deploy",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "live:setup": "node scripts/setup-live.mjs",
+    "live": "npm run build && wrangler dev --port 8787"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "leaflet": "^1.9.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "@eslint/js": "^9.0.0",
+    "@types/leaflet": "^1.9.12",
+    "@vitest/coverage-v8": "^2.1.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-security": "^3.0.1",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.90.0"
+  }
+}

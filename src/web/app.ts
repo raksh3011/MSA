@@ -1,0 +1,753 @@
+/** The authenticated workspace: header, KPI + alert queue, map with overlays, vessel detail, pages. */
+import { classifyZone, nearestBoundaryNm } from '../core/boundary';
+import { highRiskZoneOf } from '../core/engine';
+import { isCompanyRole, type Alert, type DataSource, type Geofence, type Severity, type VesselCategory, type VesselClass } from '../core/types';
+import type { CaseRecord } from '../domain/types';
+import { Backend, type FeedData, type FeedStatus, type Session } from './backend';
+import { logoMark, SHORT, NAME } from './brand';
+import type { Catalog, Ctx } from './ctx';
+import { billingPage, opsPage, overviewPage, reportsPage, revenuePage, serviceLevelsPage } from './business';
+import { icon } from './charts';
+import { casesPage, orgPage, orgsAdminPage, registryPage, supplyChainPage, voyagesPage } from './enterprise';
+import { clear, fmtDateTime, fmtTime, h } from './dom';
+import { MapView, ZONE_LABEL, ZONE_STYLE, type ZoneKey } from './map';
+import { adminPage, analyticsPage, fleetPage, zonesPage } from './pages';
+import { openReportDialog } from './report';
+import { CATEGORY_COLOR, CATEGORY_LABEL, RULE_GROUP, RULE_LABEL, SEVERITY_RANK } from './style-tokens';
+import { getTheme, toggleTheme } from './theme';
+
+type Tab = 'overview' | 'map' | 'supply' | 'voyages' | 'fleet' | 'incidents' | 'org' | 'analytics' | 'zones' | 'orgs' | 'admin' | 'billing' | 'reports' | 'service' | 'revenue' | 'ops';
+
+const SOURCE_LABEL: Record<DataSource, string> = {
+  simulated: 'Simulated · Indian Ocean scenarios',
+  digitraffic: 'Live AIS · Baltic Sea (Digitraffic)',
+  aisstream: 'Live AIS · aisstream.io',
+};
+const SOURCE_VIEW: Record<DataSource, { center: [number, number]; zoom: number }> = {
+  simulated: { center: [14, 74], zoom: 4 },
+  digitraffic: { center: [60.0, 23.5], zoom: 6 },
+  aisstream: { center: [14, 78], zoom: 4 },
+};
+
+const REGIONS: Array<{ label: string; center: [number, number]; zoom: number }> = [
+  { label: 'India EEZ', center: [13, 80], zoom: 4 },
+  { label: 'Arabian Sea', center: [16, 66], zoom: 5 },
+  { label: 'Bay of Bengal', center: [14, 87], zoom: 5 },
+  { label: 'Palk Strait', center: [9.5, 79.4], zoom: 8 },
+  { label: 'Gulf of Aden', center: [12.5, 48], zoom: 6 },
+  { label: 'Malacca', center: [3.5, 100], zoom: 6 },
+  { label: 'World', center: [20, 40], zoom: 2 },
+];
+
+const ZONE_ORDER: ZoneKey[] = ['territorial', 'contiguous', 'eez', 'foreign', 'boundary', 'highRisk', 'stations', 'geofence'];
+
+/** Animate a number from its previous value to the new one. */
+function countTo(el: HTMLElement, from: number, to: number): void {
+  if (from === to) {
+    el.textContent = String(to);
+    return;
+  }
+  const t0 = performance.now();
+  const step = (t: number): void => {
+    const f = Math.min(1, (t - t0) / 600);
+    el.textContent = String(Math.round(from + (to - from) * (1 - (1 - f) ** 3)));
+    if (f < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? ({ ...fallback, ...(JSON.parse(raw) as object) } as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function ago(ts: number, ref: number): string {
+  const s = Math.max(0, Math.round((ref - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  return `${Math.round(s / 3600)} h ago`;
+}
+
+export function startApp(root: HTMLElement, backend: Backend, session: Session, onLogout: () => void): void {
+  root.className = 'app';
+  const isOperator = isCompanyRole(session.user.role); // shipping-company staff (tenant users)
+  const canManage = !isOperator;
+  let tab: Tab = isOperator ? 'overview' : 'map';
+  let railCollapsed = loadJson<{ v: boolean }>('orvms_rail', { v: window.innerWidth < 1500 }).v;
+  let catalog: Catalog | null = null;
+  let data: FeedData | null = null;
+  let selected: string | null = null;
+  let status: FeedStatus = { online: true };
+  let watch = new Set<string>();
+  let geofences: Geofence[] = [];
+  let sevFilter: Severity | 'all' = 'all';
+  let classFilter: 'all' | VesselClass = 'all';
+  let groupFilter: 'all' | 'boundary' | 'zones' | 'integrity' = 'all';
+  let showClosed = false;
+  const hidden = new Set<VesselCategory>();
+  let lastSource: DataSource | null = null;
+  const trails = new Map<string, Array<[number, number]>>();
+  const layerPrefs = loadJson<Record<ZoneKey | 'trails' | 'labels' | 'synthetic', boolean>>('orvms_layers', {
+    territorial: true, contiguous: true, eez: true, foreign: true, boundary: true, highRisk: true, geofence: true, stations: true, trails: false, labels: true, synthetic: true,
+  });
+  let incidents: CaseRecord[] = [];
+  const knownIncidents = new Map<string, string>();
+  let incidentsPrimed = false;
+  const knownAlerts = new Set<string>();
+  let alertsPrimed = false;
+  const freshAlerts = new Set<string>();
+  let pickMode = false;
+  const kpiShown = new Map<string, number>();
+
+  // ── DOM skeleton ────────────────────────────────────────────────────────────
+  const mapEl = h('div', { id: 'map', class: 'map', style: 'position:absolute;inset:0', 'aria-label': 'Vessel map' });
+  const alertsEl = h('aside', { class: 'panel', 'aria-label': 'Alerts' });
+  const detailEl = h('aside', { class: 'panel detail', 'aria-label': 'Vessel details' });
+  const pageEl = h('section', { class: 'page hidden' });
+  const tabsEl = h('nav', { class: 'sidebar', 'aria-label': 'Sections' });
+  const statusEl = h('span', { class: 'pill' });
+  const clockEl = h('span', { class: 'clock' });
+  const sourceEl = h('span', {});
+  const searchInput = h('input', { type: 'search', placeholder: 'Search vessel name or MMSI', 'aria-label': 'Search vessels', autocomplete: 'off' });
+  const resultsEl = h('div', { class: 'results', hidden: true });
+  const layersEl = h('details', { class: 'map-overlay layers', open: true });
+  const legendEl = h('details', { class: 'map-overlay legend', open: true });
+  const coordsEl = h('div', { class: 'map-overlay coords' }, '—');
+  const regionsEl = h('div', { class: 'map-overlay regions', role: 'group', 'aria-label': 'Jump to region' });
+  const toastsEl = h('div', { class: 'toasts', 'aria-live': 'polite' });
+
+  const mapView = new MapView(
+    mapEl,
+    {
+      onSelect: (mmsi) => select(mmsi),
+      onMapClick: (lat, lon) => {
+        if (pickMode) {
+          pickMode = false;
+          mapEl.style.cursor = '';
+          renderRegions();
+          openReportDialog(ctx, { lat, lon });
+        } else if (tab === 'zones') {
+          ctx.pendingGeo = { lat, lon };
+          renderPage();
+        }
+      },
+      onCursor: (lat, lon) => {
+        coordsEl.textContent = `${Math.abs(lat).toFixed(3)}°${lat >= 0 ? 'N' : 'S'}  ${Math.abs(lon).toFixed(3)}°${lon >= 0 ? 'E' : 'W'}`;
+      },
+    },
+    SOURCE_VIEW.simulated.center,
+    SOURCE_VIEW.simulated.zoom,
+  );
+
+  // ── context for pages ───────────────────────────────────────────────────────
+  const ctx: Ctx = {
+    backend,
+    session,
+    isOperator,
+    canManage,
+    data: () => data,
+    watch: () => watch,
+    geofences: () => geofences,
+    pendingGeo: null,
+    api: (method, path, body) => backend.request(method, path, session.token, body),
+    alertSeverity: () => alertSeverityMap(),
+    openOnMap: (mmsi) => {
+      tab = 'map';
+      select(mmsi);
+    },
+    toggleWatch: async (mmsi) => {
+      if (watch.has(mmsi)) await ctx.api('DELETE', `/api/watchlist/${mmsi}`);
+      else await ctx.api('POST', '/api/watchlist', { mmsi });
+      await loadWatch();
+      await refreshNow();
+      ctx.toast(watch.has(mmsi) ? 'Added to watchlist' : 'Removed from watchlist');
+    },
+    reloadGeofences: loadGeofences,
+    rerenderPage: () => renderPage(),
+    toast: (message, kind = 'info', ms = 3200) => {
+      const t = h('div', { class: `toast ${kind}`, role: 'status' }, message);
+      toastsEl.append(t);
+      while (toastsEl.children.length > 4) toastsEl.firstElementChild?.remove();
+      setTimeout(() => t.remove(), ms);
+    },
+    alertsFor: (mmsi) => (data?.alerts ?? []).filter((a) => a.mmsi === mmsi),
+    incidents: () => incidents,
+    catalog: () => catalog,
+    nowMs: () => data?.ts ?? Date.now(),
+    showRoute: (w) => mapView.showRoute(w),
+    refreshIncidents: () => loadIncidents(),
+    navigate: (t) => {
+      tab = t as Tab;
+      renderAll();
+    },
+    reportVessel: (mmsi) => {
+      const v = data?.vessels.find((x) => x.mmsi === mmsi);
+      if (v) openReportDialog(ctx, { mmsi: v.mmsi, name: v.name, lat: v.lat, lon: v.lon });
+    },
+  };
+
+  const role = session.user.role;
+  const tabs: Array<{ id: Tab; label: string; icon: string; group: string; show: boolean }> = [
+    { id: 'overview', label: 'Overview', icon: 'overview', group: 'Operate', show: isOperator },
+    { id: 'map', label: 'Live map', icon: 'map', group: isOperator ? 'Operate' : 'Monitor', show: true },
+    { id: 'supply', label: 'Supply chain', icon: 'supply', group: 'Operate', show: isOperator },
+    { id: 'voyages', label: 'Voyages', icon: 'voyages', group: 'Operate', show: isOperator },
+    { id: 'fleet', label: isOperator ? 'Fleet registry' : 'Watchlist', icon: isOperator ? 'fleet' : 'watch', group: isOperator ? 'Operate' : 'Monitor', show: role !== 'admin' },
+    { id: 'zones', label: 'Geofences', icon: 'zones', group: 'Monitor', show: !isOperator },
+    { id: 'incidents', label: isOperator ? 'My reports' : 'Case desk', icon: 'incidents', group: 'Respond', show: true },
+    { id: 'service', label: 'Service levels', icon: 'service', group: 'Respond', show: !isOperator },
+    { id: 'reports', label: 'Compliance reports', icon: 'reports', group: 'Govern', show: role === 'org_admin' || role === 'risk_officer' },
+    { id: 'analytics', label: 'Analytics', icon: 'analytics', group: 'Govern', show: true },
+    { id: 'billing', label: 'Billing & contract', icon: 'billing', group: 'Account', show: role === 'org_admin' },
+    { id: 'org', label: 'Organisation', icon: 'org', group: 'Account', show: isOperator },
+    { id: 'orgs', label: 'Customers', icon: 'orgs', group: 'Platform', show: role === 'admin' },
+    { id: 'revenue', label: 'Revenue', icon: 'revenue', group: 'Platform', show: role === 'admin' },
+    { id: 'ops', label: 'Operations', icon: 'ops', group: 'Platform', show: role === 'admin' },
+    { id: 'admin', label: 'Administration', icon: 'admin', group: 'Platform', show: role === 'admin' },
+  ];
+
+  // Compact account menu: avatar button -> name, role, theme toggle and Sign out (always reachable at any width).
+  const logout = (): void => {
+    stopFeed();
+    clearInterval(clockTimer);
+    clearInterval(incidentTimer);
+    mapView.map.remove();
+    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('click', closeMenu);
+    onLogout();
+  };
+  const menuPanel = h(
+    'div',
+    { class: 'user-menu', role: 'menu', hidden: true },
+    h('div', { class: 'um-head' }, h('strong', {}, session.user.displayName), h('span', { class: 'muted' }, session.user.fleetName ?? session.user.role), h('span', { class: 'muted' }, `@${session.user.username}`)),
+    h('button', { class: 'um-item', role: 'menuitem', onclick: () => { toggleTheme(); ctx.toast(`${getTheme()} theme`); } }, '◐  Switch light / dark theme'),
+    h('button', { class: 'um-item danger', role: 'menuitem', onclick: logout }, '⎋  Sign out'),
+  );
+  const avatarBtn = h('button', { class: 'avatar-btn', 'aria-haspopup': 'menu', 'aria-label': `Account menu for ${session.user.displayName}`, title: 'Account', onclick: (e: Event) => { e.stopPropagation(); menuPanel.hidden = !menuPanel.hidden; } }, session.user.displayName.slice(0, 1).toUpperCase());
+  const closeMenu = (): void => { menuPanel.hidden = true; };
+  const userMenu = h('div', { class: 'user-menu-wrap' }, avatarBtn, menuPanel);
+  document.addEventListener('click', closeMenu);
+
+  const workspaceEl = h('div', { class: 'workspace' }, alertsEl, h('div', { class: 'center' }, mapEl, regionsEl, layersEl, legendEl, coordsEl, pageEl), detailEl);
+  const shellEl = h('div', { class: `shell ${railCollapsed ? 'collapsed' : ''}` }, tabsEl, workspaceEl);
+  const header = h(
+    'header',
+    { class: 'hdr' },
+    h('button', { class: 'rail-toggle', 'aria-label': 'Collapse or expand navigation', title: 'Collapse / expand navigation', onclick: () => { railCollapsed = !railCollapsed; saveJson('orvms_rail', { v: railCollapsed }); shellEl.classList.toggle('collapsed', railCollapsed); } }, icon('menu', 18)),
+    h('div', { class: 'brand-lockup', title: NAME }, logoMark(), h('div', {}, h('div', { class: 'brand-name' }, SHORT), h('div', { class: 'brand-sub' }, 'Ocean Risk & Vessel Monitoring'))),
+    h('div', { class: 'search' }, h('span', { class: 's-ico', 'aria-hidden': 'true' }, '⌕'), searchInput, h('span', { class: 'kbd' }, '/'), resultsEl),
+    h('div', { class: 'spacer' }),
+    h(
+      'div',
+      { class: 'hdr-right' },
+      sourceEl,
+      statusEl,
+      clockEl,
+      userMenu,
+    ),
+  );
+
+  clear(root);
+  root.append(
+    header,
+    shellEl,
+    toastsEl,
+  );
+
+  // ── search ──────────────────────────────────────────────────────────────────
+  searchInput.addEventListener('input', () => {
+    const q = (searchInput as HTMLInputElement).value.trim().toLowerCase();
+    clear(resultsEl);
+    if (q.length < 2) {
+      resultsEl.hidden = true;
+      return;
+    }
+    const hits = (data?.vessels ?? []).filter((v) => v.name.toLowerCase().includes(q) || v.mmsi.includes(q)).slice(0, 12);
+    if (hits.length === 0) resultsEl.append(h('div', { class: 'empty' }, 'No matching vessels'));
+    for (const v of hits) {
+      resultsEl.append(
+        h(
+          'button',
+          {
+            onclick: () => {
+              resultsEl.hidden = true;
+              (searchInput as HTMLInputElement).value = '';
+              ctx.openOnMap(v.mmsi);
+            },
+          },
+          h('span', { class: 'swatch', style: `background:${CATEGORY_COLOR[v.category]}` }),
+          v.name,
+          h('small', {}, `${v.mmsi} · ${v.flag}`),
+        ),
+      );
+    }
+    resultsEl.hidden = false;
+  });
+  const onKey = (e: KeyboardEvent): void => {
+    const typing = (e.target as HTMLElement | null)?.matches('input, textarea, select');
+    if (e.key === '/' && !typing) {
+      e.preventDefault();
+      searchInput.focus();
+    } else if (e.key === 'Escape') {
+      resultsEl.hidden = true;
+      menuPanel.hidden = true;
+      if (typing) (e.target as HTMLElement).blur();
+      else if (selected) select(null);
+    }
+  };
+  document.addEventListener('keydown', onKey);
+
+  // ── derived data ────────────────────────────────────────────────────────────
+  function alertSeverityMap(): Map<string, Severity> {
+    const m = new Map<string, Severity>();
+    for (const a of data?.alerts ?? []) {
+      if (a.status === 'resolved') continue;
+      const cur = m.get(a.mmsi);
+      if (!cur || SEVERITY_RANK[a.severity] > SEVERITY_RANK[cur]) m.set(a.mmsi, a.severity);
+    }
+    return m;
+  }
+
+  function select(mmsi: string | null): void {
+    selected = mmsi;
+    renderAll();
+    const v = mmsi ? data?.vessels.find((x) => x.mmsi === mmsi) : undefined;
+    if (v) mapView.focus(v.lat, v.lon);
+  }
+
+  // ── renderers ───────────────────────────────────────────────────────────────
+  function renderTabs(): void {
+    clear(tabsEl);
+    let group = '';
+    for (const t of tabs.filter((x) => x.show)) {
+      if (t.group !== group) {
+        group = t.group;
+        tabsEl.append(h('div', { class: 'nav-group' }, group));
+      }
+      const openCount = t.id === 'incidents' ? incidents.filter((i) => i.status === 'open').length : 0;
+      tabsEl.append(
+        h(
+          'button',
+          { class: `nav-item ${t.id === tab ? 'active' : ''}`, title: t.label, 'aria-current': t.id === tab ? 'page' : undefined, onclick: () => { tab = t.id; renderAll(); } },
+          icon(t.icon, 18),
+          h('span', { class: 'nav-label' }, t.label),
+          openCount > 0 ? h('span', { class: 'tab-badge' }, String(openCount)) : null,
+        ),
+      );
+    }
+    tabsEl.append(h('div', { class: 'nav-foot' }, h('span', { class: 'nav-label' }, `${SHORT} v3.1`)));
+  }
+
+  function renderSource(): void {
+    clear(sourceEl);
+    sourceEl.append(h('span', { class: 'pill' }, SOURCE_LABEL[data?.source ?? 'simulated']));
+  }
+
+  function renderStatus(): void {
+    const live = (data?.source ?? 'simulated') !== 'simulated';
+    statusEl.className = `pill ${!status.online ? 'bad' : live ? 'ok' : 'sim'}`;
+    clear(statusEl);
+    const feedError = data?.feed?.error ?? status.error;
+    const label = !status.online
+      ? 'Reconnecting…'
+      : feedError
+        ? `Feed problem: ${feedError}`
+        : `${live ? 'LIVE' : 'SIM'} · ${data?.vessels.length ?? 0} vessels${data && live ? ` · ${ago(data.feed?.lastMessageAt ?? data.ts, Date.now())}` : ''}`;
+    if (feedError) statusEl.className = 'pill bad';
+    statusEl.append(h('span', { class: 'dot' }), label);
+  }
+
+  function renderClock(): void {
+    clockEl.textContent = new Date().toISOString().slice(11, 19) + ' UTC';
+    renderStatus();
+  }
+
+  function renderAlerts(): void {
+    clear(alertsEl);
+    const all = data?.alerts ?? [];
+    const list = all
+      .filter((a) => showClosed || a.status !== 'resolved')
+      .filter((a) => sevFilter === 'all' || a.severity === sevFilter)
+      .filter((a) => classFilter === 'all' || a.vesselClass === classFilter)
+      .filter((a) => groupFilter === 'all' || RULE_GROUP[a.ruleId] === groupFilter)
+      .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.ts - a.ts); // most urgent first
+    const live = all.filter((a) => a.status !== 'resolved');
+    const kpi = (value: number, label: string, cls = ''): HTMLElement => {
+      const num = h('strong', {}, String(kpiShown.get(label) ?? value));
+      countTo(num, kpiShown.get(label) ?? value, value);
+      kpiShown.set(label, value);
+      return h('div', { class: `kpi ${cls}` }, num, h('span', {}, label));
+    };
+    alertsEl.append(
+      h(
+        'div',
+        { class: 'kpis' },
+        kpi(data?.vessels.length ?? 0, 'Vessels'),
+        kpi(live.length, 'Open alerts'),
+        kpi(live.filter((a) => a.severity === 'critical').length, 'Critical', 'crit'),
+        kpi(live.filter((a) => a.severity === 'high').length, 'High', 'high'),
+      ),
+      h('div', { class: 'panel-head' }, h('h2', {}, isOperator ? 'Fleet alerts' : 'Alert queue'), h('span', { class: 'count' }, String(list.length))),
+      h(
+        'div',
+        { class: 'filters' },
+        ...(['all', 'critical', 'high', 'medium', 'low'] as const).map((s) =>
+          h('button', { class: `chip ${sevFilter === s ? 'active' : ''}`, 'aria-pressed': String(sevFilter === s), onclick: () => { sevFilter = s; renderAlerts(); } }, s),
+        ),
+        h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: showClosed, onchange: (e: Event) => { showClosed = (e.target as HTMLInputElement).checked; renderAlerts(); } }), 'show resolved'),
+      ),
+      h(
+        'div',
+        { class: 'filters tight', role: 'group', 'aria-label': 'Vessel class' },
+        ...([['all', 'All vessels'], ['indian', '🇮🇳 Indian'], ['foreign', 'Foreign'], ['unknown', 'Unknown']] as const).map(([k, label]) =>
+          h('button', { class: `chip ${classFilter === k ? 'active' : ''}`, 'aria-pressed': String(classFilter === k), onclick: () => { classFilter = k; renderAlerts(); } }, label),
+        ),
+      ),
+      h(
+        'div',
+        { class: 'filters tight', role: 'group', 'aria-label': 'Alert type' },
+        ...([['all', 'Any type'], ['boundary', 'Maritime boundary'], ['zones', 'Critical zones'], ['integrity', 'Dark / spoofing']] as const).map(([k, label]) =>
+          h('button', { class: `chip ${groupFilter === k ? 'active' : ''}`, 'aria-pressed': String(groupFilter === k), onclick: () => { groupFilter = k; renderAlerts(); } }, label),
+        ),
+      ),
+    );
+    const ul = h('ul', { class: 'alert-list' });
+    for (const a of list.slice(0, 100)) ul.append(alertItem(a));
+    if (list.length === 0) ul.append(h('li', { class: 'empty' }, isOperator ? 'No alerts for your vessels. Add vessels from the My fleet tab.' : 'No alerts match. All quiet.'));
+    alertsEl.append(ul);
+  }
+
+  function alertItem(a: Alert): HTMLElement {
+    const ref = data?.ts ?? Date.now();
+    return h(
+      'li',
+      { class: `alert sev-${a.severity} st-${a.status} ${a.mmsi === selected ? 'sel' : ''} ${freshAlerts.has(a.id) ? 'fresh' : ''}` },
+      h(
+        'button',
+        { class: 'alert-main', onclick: () => ctx.openOnMap(a.mmsi) },
+        h('div', { class: 'alert-top' }, h('span', { class: 'sevtag' }, a.severity.toUpperCase()), h('span', { class: 'rule' }, RULE_LABEL[a.ruleId] ?? a.ruleId), a.vesselClass ? h('span', { class: `cls-tag ${a.vesselClass}` }, a.vesselClass === 'indian' ? 'INDIAN' : a.vesselClass.toUpperCase()) : null, h('span', { class: 'time' }, `${fmtTime(a.ts)} · ${ago(a.ts, ref)}`)),
+        h('div', { class: 'alert-msg' }, a.message),
+      ),
+      a.status === 'resolved'
+        ? h('div', { class: 'alert-foot muted' }, `Resolved by ${a.handledBy ?? '-'}${a.note ? ` - ${a.note}` : ''}`)
+        : h(
+            'div',
+            { class: 'alert-foot' },
+            a.status === 'acknowledged' ? h('span', { class: 'muted' }, `Acknowledged by ${a.handledBy ?? ''}`) : h('button', { class: 'btn small', onclick: () => void act(a, 'ack') }, 'Acknowledge'),
+            h('button', { class: 'btn small', onclick: () => void act(a, 'resolve') }, 'Resolve'),
+          ),
+    );
+  }
+
+  async function act(a: Alert, kind: 'ack' | 'resolve'): Promise<void> {
+    const note = kind === 'resolve' ? (prompt('Resolution note (optional):') ?? undefined) : undefined;
+    await ctx.api('POST', `/api/alerts/${a.id}/${kind}`, note ? { note } : {});
+    await refreshNow();
+    ctx.toast(kind === 'ack' ? 'Alert acknowledged' : 'Alert resolved');
+  }
+
+  function renderDetail(): void {
+    clear(detailEl);
+    detailEl.classList.toggle('open', selected !== null);
+    const v = selected ? data?.vessels.find((x) => x.mmsi === selected) : undefined;
+    if (!v) {
+      detailEl.append(h('div', { class: 'panel-head' }, h('h2', {}, 'Vessel details')), h('p', { class: 'empty' }, 'Select a vessel on the map, from search or from an alert.'));
+      mapView.vessels.set({ selected: null });
+      return;
+    }
+    const ref = data?.ts ?? Date.now();
+    const zone = classifyZone(v.lat, v.lon);
+    const risk = highRiskZoneOf(v);
+    const zoneText: Record<string, string> = {
+      territorial: 'Indian territorial sea (12 nm)',
+      contiguous: 'Indian contiguous zone',
+      eez: 'Indian EEZ',
+      foreign: `${zone.country ?? 'Foreign'} waters (modelled)`,
+      high_seas: 'Outside modelled Indian waters',
+    };
+    const row = (k: string, val: string): HTMLElement => h('div', { class: 'kv' }, h('span', {}, k), h('strong', {}, val));
+    const mine = (data?.alerts ?? []).filter((a) => a.mmsi === v.mmsi).slice(0, 6);
+    detailEl.append(
+      h('div', { class: 'panel-head' }, h('h2', {}, v.name), h('button', { class: 'btn small', 'aria-label': 'Close details', onclick: () => select(null) }, '✕')),
+      h('div', { class: 'swatch-row' }, h('span', { class: 'swatch', style: `background:${CATEGORY_COLOR[v.category]}` }), CATEGORY_LABEL[v.category], v.origin === 'synthetic' ? h('span', { class: 'origin-tag synthetic' }, 'SYNTHETIC') : null, v.origin === 'reported' ? h('span', { class: 'origin-tag reported' }, 'USER REPORT') : null),
+      h('div', {}, h('span', { class: `zone-tag ${zone.zone}` }, zoneText[zone.zone] ?? zone.zone), risk ? h('span', { class: 'zone-tag', style: 'margin-left:6px' }, `${risk.name} (${risk.level})`) : null),
+      row('MMSI', v.mmsi),
+      row('Flag', v.flag),
+      row('Position', `${v.lat.toFixed(3)}°, ${v.lon.toFixed(3)}°`),
+      row('Speed', `${v.sog.toFixed(1)} kn`),
+      row('Course / heading', `${Math.round(v.cog)}° / ${Math.round(v.heading)}°`),
+      row('Nearest maritime boundary', `${nearestBoundaryNm(v.lat, v.lon).toFixed(0)} nm`),
+      row('Last report', `${fmtDateTime(v.lastSeen)} (${ago(v.lastSeen, ref)})`),
+      h(
+        'div',
+        { class: 'detail-actions' },
+        h('button', { class: 'btn', onclick: () => mapView.focus(v.lat, v.lon, 8) }, 'Centre'),
+        h('button', { class: 'btn', onclick: () => void ctx.toggleWatch(v.mmsi) }, watch.has(v.mmsi) ? '★ Watching' : '☆ Watch'),
+      ),
+      h('button', { class: 'btn danger-solid', onclick: () => ctx.reportVessel(v.mmsi) }, '⚑ Report suspicious vessel'),
+      ...reportsAbout(v.mmsi),
+      h('h3', {}, 'Recent alerts'),
+      mine.length
+        ? h('ul', { class: 'mini' }, ...mine.map((a) => h('li', { class: `kv sev-${a.severity}` }, h('span', {}, h('span', { class: 'dot' }), ` ${fmtTime(a.ts)} `), h('strong', {}, a.message))))
+        : h('p', { class: 'empty' }, 'None'),
+    );
+    mapView.vessels.set({ selected: v.mmsi, trails });
+  }
+
+  /** Incident cards about one vessel, shown in its detail panel. */
+  function reportsAbout(mmsi: string): HTMLElement[] {
+    const list = incidents.filter((i) => i.mmsi === mmsi).slice(0, 3);
+    if (list.length === 0) return [];
+    return [
+      h('h3', {}, 'Reports'),
+      ...list.map((i) => h('div', { class: `inc-mini st-${i.status}` }, h('span', { class: `badge st-${i.status}` }, i.status), ` ${i.station.name}`, h('div', { class: 'muted' }, `${i.category.replace(/_/g, ' ')} · by ${i.reporter}`))),
+    ];
+  }
+
+  function renderRegions(): void {
+    clear(regionsEl);
+    for (const r of REGIONS) {
+      regionsEl.append(h('button', { class: 'btn small ghost', onclick: () => mapView.map.setView(r.center, r.zoom, { animate: true }) }, r.label));
+    }
+    regionsEl.append(
+      h('button', {
+        class: `btn small ${pickMode ? 'primary' : 'danger-solid'}`,
+        onclick: () => {
+          pickMode = !pickMode;
+          mapEl.style.cursor = pickMode ? 'crosshair' : '';
+          renderRegions();
+          if (pickMode) ctx.toast('Click the map where you saw the unidentified boat');
+        },
+      }, pickMode ? 'Click the map… (cancel)' : '⚑ Report unidentified boat'),
+    );
+  }
+
+  function renderOverlays(): void {
+    // layers
+    clear(layersEl);
+    const body = h('div', { class: 'body' });
+    body.append(h('h3', { style: 'margin-top:6px' }, 'Maritime zones'));
+    for (const k of ZONE_ORDER) {
+      const st = ZONE_STYLE[k];
+      body.append(
+        h(
+          'label',
+          { class: `lyr ${layerPrefs[k] ? '' : 'off'}` },
+          h('input', { type: 'checkbox', checked: layerPrefs[k], onchange: (e: Event) => { layerPrefs[k] = (e.target as HTMLInputElement).checked; saveJson('orvms_layers', layerPrefs); mapView.setZoneVisible(k, layerPrefs[k]); renderOverlays(); } }),
+          h('span', { class: 'sw', style: `border-color:${st.color};background:${st.color}${Math.round(Math.max(st.fill, 0.15) * 255).toString(16).padStart(2, '0')}` }),
+          ZONE_LABEL[k],
+        ),
+      );
+    }
+    body.append(h('h3', {}, 'Vessels'));
+    for (const [k, label] of [['trails', 'Show all trails'], ['labels', 'Show names'], ['synthetic', 'Show synthetic vessels']] as const) {
+      body.append(
+        h('label', { class: 'lyr' }, h('input', { type: 'checkbox', checked: layerPrefs[k], onchange: (e: Event) => { layerPrefs[k] = (e.target as HTMLInputElement).checked; saveJson('orvms_layers', layerPrefs); applyVesselPrefs(); } }), label),
+      );
+    }
+    const simulatedAll = data?.source === 'simulated';
+    if (!isOperator && !simulatedAll) {
+      body.append(
+        h('label', { class: 'lyr', title: 'Adds ~85 synthetic vessels around India (real-time pace) to the live feed, clearly marked as synthetic' },
+          h('input', { type: 'checkbox', checked: data?.feed?.synthetic ?? false, onchange: async (e: Event) => { const enabled = (e.target as HTMLInputElement).checked; await ctx.api('PUT', '/api/feed/synthetic', { enabled }); await refreshNow(); ctx.toast(enabled ? 'Synthetic India traffic blended in' : 'Synthetic traffic removed'); } }),
+          'Blend synthetic India traffic'),
+      );
+    }
+    body.append(h('p', { class: 'muted', style: 'margin:8px 0 0;font-size:.7rem' }, 'Zones are modelled from coastlines (UNCLOS distances), not official limits.'));
+    layersEl.append(h('summary', {}, 'Layers', h('span', { class: 'muted' }, '▾')), body);
+
+    // legend
+    clear(legendEl);
+    const counts = new Map<VesselCategory, number>();
+    for (const v of data?.vessels ?? []) counts.set(v.category, (counts.get(v.category) ?? 0) + 1);
+    const lb = h('div', { class: 'body' });
+    for (const cat of Object.keys(CATEGORY_LABEL) as VesselCategory[]) {
+      const n = counts.get(cat) ?? 0;
+      if (n === 0 && !hidden.has(cat)) continue;
+      lb.append(
+        h(
+          'label',
+          { class: `lyr ${hidden.has(cat) ? 'off' : ''}` },
+          h('input', { type: 'checkbox', checked: !hidden.has(cat), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) hidden.delete(cat); else hidden.add(cat); mapView.setHidden(new Set(hidden)); renderOverlays(); } }),
+          h('span', { class: 'swatch', style: `background:${CATEGORY_COLOR[cat]}` }),
+          CATEGORY_LABEL[cat],
+          h('span', { class: 'n' }, String(n)),
+        ),
+      );
+    }
+    lb.append(h('p', { class: 'muted', style: 'margin:8px 0 0;font-size:.7rem' }, 'Pulsing ring = open alert · dashed ring = in your set · amber outline = synthetic (not real AIS) · red diamond = user-reported contact'));
+    legendEl.append(h('summary', {}, 'Vessel types', h('span', { class: 'muted' }, '▾')), lb);
+  }
+
+  function applyVesselPrefs(): void {
+    mapView.vessels.set({ showTrails: layerPrefs.trails, showLabels: layerPrefs.labels, hideSynthetic: !layerPrefs.synthetic });
+  }
+
+  async function renderPage(): Promise<void> {
+    const isMap = tab === 'map';
+    const overlayTab = tab === 'zones';
+    workspaceEl.classList.toggle('wide-page', !isMap && !overlayTab);
+    mapEl.classList.toggle('hidden', !isMap && !overlayTab);
+    layersEl.classList.toggle('hidden', !isMap && !overlayTab);
+    regionsEl.classList.toggle('hidden', !isMap);
+    legendEl.classList.toggle('hidden', !isMap);
+    coordsEl.classList.toggle('hidden', !isMap && !overlayTab);
+    pageEl.classList.toggle('hidden', isMap);
+    pageEl.classList.toggle('overlay', overlayTab);
+    clear(pageEl);
+    if (isMap) return mapView.invalidate();
+    if (tab === 'fleet') pageEl.append(isOperator ? registryPage(ctx) : fleetPage(ctx, () => void downloadCsv()));
+    else if (tab === 'overview') pageEl.append(overviewPage(ctx));
+    else if (tab === 'billing') pageEl.append(billingPage(ctx));
+    else if (tab === 'reports') pageEl.append(reportsPage(ctx));
+    else if (tab === 'service') pageEl.append(serviceLevelsPage(ctx));
+    else if (tab === 'revenue') pageEl.append(revenuePage(ctx));
+    else if (tab === 'ops') pageEl.append(opsPage(ctx));
+    else if (tab === 'supply') pageEl.append(supplyChainPage(ctx));
+    else if (tab === 'voyages') pageEl.append(voyagesPage(ctx));
+    else if (tab === 'org') pageEl.append(orgPage(ctx));
+    else if (tab === 'orgs') pageEl.append(orgsAdminPage(ctx));
+    else if (tab === 'incidents') pageEl.append(casesPage(ctx, session.user.station));
+    else if (tab === 'analytics') pageEl.append(analyticsPage(ctx));
+    else if (tab === 'zones') {
+      pageEl.append(zonesPage(ctx));
+      mapView.invalidate();
+    } else if (tab === 'admin') {
+      const el = await adminPage(ctx);
+      clear(pageEl);
+      pageEl.append(el);
+    }
+  }
+
+  async function downloadCsv(): Promise<void> {
+    const res = await ctx.api<string>('GET', '/api/reports/alerts.csv');
+    const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
+    const a = h('a', { href: url, download: 'orvms-alerts.csv' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    ctx.toast('Alerts exported');
+  }
+
+  function renderAll(): void {
+    renderTabs();
+    renderRegions();
+    renderSource();
+    renderStatus();
+    renderAlerts();
+    renderDetail();
+    renderOverlays();
+    void renderPage();
+    pushToMap();
+  }
+
+  function pushToMap(): void {
+    if (data) mapView.showVessels(data.vessels, alertSeverityMap(), selected, watch, data.ts);
+    mapView.showGeofences(geofences);
+  }
+
+  // ── data plumbing ───────────────────────────────────────────────────────────
+  function onData(d: FeedData): void {
+    const firstOfSource = lastSource !== d.source;
+    data = d;
+    if (firstOfSource) {
+      lastSource = d.source;
+      const v = SOURCE_VIEW[d.source];
+      mapView.map.setView(v.center, v.zoom);
+      renderSource();
+    }
+    for (const v of d.vessels) {
+      const t = trails.get(v.mmsi) ?? [];
+      const last = t[t.length - 1];
+      if (!last || last[0] !== v.lat || last[1] !== v.lon) t.push([v.lat, v.lon]);
+      if (t.length > 40) t.shift();
+      trails.set(v.mmsi, t);
+    }
+    if (trails.size > 12_000) trails.clear();
+    announceNewAlerts(d.alerts);
+    if (tab === 'analytics' || tab === 'fleet') void renderPage();
+    renderStatus();
+    renderAlerts();
+    renderOverlays();
+    if (selected) renderDetail();
+    mapView.vessels.set({ trails });
+    pushToMap();
+  }
+
+  /** Toast + flash for alerts that appeared since the last update (not for the initial load). */
+  function announceNewAlerts(list: Alert[]): void {
+    const fresh = list.filter((a) => !knownAlerts.has(a.id));
+    for (const a of list) knownAlerts.add(a.id);
+    if (!alertsPrimed) {
+      alertsPrimed = true;
+      return;
+    }
+    for (const a of fresh) freshAlerts.add(a.id);
+    if (fresh.length > 0) setTimeout(() => { for (const a of fresh) freshAlerts.delete(a.id); renderAlerts(); }, 5000);
+    for (const a of fresh.filter((x) => x.severity === 'high' || x.severity === 'critical').slice(0, 2)) {
+      ctx.toast(`${a.severity === 'critical' ? '🚨' : '⚠'} ${a.severity.toUpperCase()}: ${a.message}`, a.severity === 'critical' ? 'crit' : 'warn');
+    }
+  }
+
+  /** Poll incidents; controllers are told when a report is routed to their station, reporters when it is actioned. */
+  async function loadIncidents(): Promise<void> {
+    const r = await ctx.api<{ cases: CaseRecord[] }>('GET', '/api/cases');
+    if (r.status !== 200) return;
+    incidents = r.data.cases ?? [];
+    for (const i of incidents) {
+      const before = knownIncidents.get(i.id);
+      knownIncidents.set(i.id, i.status);
+      if (!incidentsPrimed) continue;
+      if (before === undefined && !isOperator && (!session.user.station || (i.station.desk ?? i.station.id) === session.user.station) && i.reporter !== session.user.username) {
+        ctx.toast(`🚨 New report routed to ${i.station.name}: ${i.vesselName}`, 'crit', 9000);
+      } else if (before !== undefined && before !== i.status && isOperator) {
+        ctx.toast(`Your report on ${i.vesselName} is now ${i.status}`, 'ok', 6000);
+      }
+    }
+    incidentsPrimed = true;
+    renderTabs();
+    if (tab === 'incidents') renderPage();
+    if (selected) renderDetail();
+  }
+
+  async function loadWatch(): Promise<void> {
+    const r = await ctx.api<{ mmsi: string[] }>('GET', '/api/watchlist');
+    watch = new Set(r.data.mmsi ?? []);
+  }
+  async function loadGeofences(): Promise<void> {
+    const r = await ctx.api<{ geofences: Geofence[] }>('GET', '/api/geofences');
+    geofences = r.data.geofences ?? [];
+    mapView.showGeofences(geofences);
+  }
+  async function refreshNow(): Promise<void> {
+    const d = await backend.fetchOnce(session);
+    if (d) {
+      onData(d);
+      renderAll();
+    }
+  }
+
+  let stopFeed: () => void = () => undefined;
+  const clockTimer = setInterval(renderClock, 1000);
+  const incidentTimer = setInterval(() => void loadIncidents(), 8000);
+  void (async () => {
+    for (const k of ZONE_ORDER) mapView.setZoneVisible(k, layerPrefs[k]);
+    applyVesselPrefs();
+    await Promise.all([loadWatch(), loadGeofences(), loadIncidents(), ctx.api<Catalog>('GET', '/api/catalog').then((c) => { if (c.status === 200) catalog = c.data; })]);
+    renderAll();
+    renderClock();
+    stopFeed = backend.startFeed(session, onData, (s) => { status = s; renderStatus(); });
+  })();
+}

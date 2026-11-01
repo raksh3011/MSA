@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+*.pyc
+__pycache__/
+reports/*.tmp
+*.log
+.claude/

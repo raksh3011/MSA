@@ -1,0 +1,64 @@
+name = "orvms"
+main = "src/worker/index.ts"
+compatibility_date = "2025-01-01"
+
+# The built frontend (npm run build -> dist/) is served from the same origin, for free.
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "OrvmsHub"
+
+# SQLite-backed Durable Objects are available on the Workers Free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OrvmsHub"]
+
+# Relational database for business records. Local `wrangler dev` creates it automatically; for a real deploy run
+#   wrangler d1 create orvms
+# and paste the printed database_id below. The Worker applies migrations itself on boot.
+[[d1_databases]]
+binding = "DB"
+database_name = "orvms"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[vars]
+ENVIRONMENT = "production"
+ALLOWED_ORIGINS = "*"
+# aisstream (needs AISSTREAM_API_KEY) | digitraffic (real Baltic AIS, no key) | simulated (Indian Ocean scenarios)
+DATA_SOURCE = "simulated"
+
+# Secrets (never commit):
+#   wrangler secret put JWT_SECRET         (long random string)
+#   wrangler secret put SEED_PASSWORD      (>= 8 chars; password for the seeded admin/analyst/operator users)
+#   wrangler secret put AISSTREAM_API_KEY  (optional; without it the server runs the built-in simulator)
+
+# ── staging environment ─────────────────────────────────────────────────────────
+# Deploy with `wrangler deploy --env staging`. Bindings are not inherited between environments, so they are repeated here.
+# Create its database first:  wrangler d1 create orvms-staging   (paste the id below) and set the same secrets with `--env staging`.
+[env.staging]
+name = "orvms-staging"
+
+[env.staging.assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+
+[[env.staging.durable_objects.bindings]]
+name = "HUB"
+class_name = "OrvmsHub"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["OrvmsHub"]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "orvms-staging"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+ALLOWED_ORIGINS = "*"
+DATA_SOURCE = "simulated"
