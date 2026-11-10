@@ -3,6 +3,8 @@
 **A multi-tenant maritime risk and supply-chain visibility platform** for shipping companies and the Indian Coast Guard.
 It links *risk at sea* (live and synthetic AIS, modelled maritime zones, graded alerts) to *voyages*, *customer shipments* and *delivery commitments*, with approvals, SLAs, audit and integrations — serverless and free to host.
 
+**Try it in your browser (no server, no sign-up):** https://raksh3011.github.io/orvms/app/ — the production UI with the real API, risk engine and traffic simulator running inside the tab (`npm run build:static`; see `src/web/local.ts`). Pick a role, change the simulation speed, take the guided tour, and open *How it works* for the architecture.
+
 > Business case, requirements and architecture: [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (four-layer diagrams) · [`docs/TECH_DECISIONS.md`](docs/TECH_DECISIONS.md) · [`docs/openapi.yaml`](docs/openapi.yaml) · [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 
 ## What the business gets

@@ -551,3 +551,51 @@ code { background: var(--surface-3); padding: .1em .4em; border-radius: 4px; fon
   body.print-doc .paper { box-shadow: none; padding: 0; }
   body.print-doc .no-print { display: none !important; }
 }
+
+/* static demo chrome */
+.demo-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 3000; height: 40px; display: flex; align-items: center; gap: .6rem; padding: 0 .8rem; background: var(--surface); border-bottom: 1px solid var(--border); font-size: .78rem; overflow-x: auto; white-space: nowrap; }
+.demo-bar .spacer { flex: 1; }
+.demo-tag { font-weight: 700; letter-spacing: .08em; font-size: .68rem; color: var(--accent-ink); background: var(--accent); padding: .2em .6em; border-radius: 999px; }
+.demo-note { color: var(--muted); }
+.demo-clock { font-variant-numeric: tabular-nums; color: var(--muted); }
+.demo-ctl { display: inline-flex; gap: .4rem; align-items: center; }
+.demo-who { font: inherit; font-size: .78rem; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; min-height: 30px; padding: 0 .5rem; }
+.btn.small { min-height: 30px; padding: .25em .7em; font-size: .78rem; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg-b { font: inherit; font-size: .76rem; padding: .25em .6em; background: transparent; color: var(--muted); border: 0; cursor: pointer; min-height: 28px; }
+.seg-b[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); }
+body.has-demo { padding-top: 40px; }
+body.has-demo #root.app { height: calc(100vh - 40px); }
+@media (max-width: 900px) { .demo-note { display: none; } body.has-demo #root.app { height: auto; } }
+.quick h3 { margin: 1.6rem 0 .7rem; }
+.quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .7rem; }
+.quick-card { text-align: left; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: .8rem .9rem; display: flex; flex-direction: column; gap: .2rem; cursor: pointer; transition: border-color .12s, transform .12s; }
+.quick-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.quick-card .who { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.quick-card span:last-child { font-size: .8rem; color: var(--muted); }
+.tour-layer { position: fixed; inset: 0; z-index: 5000; }
+.tour-spot { position: fixed; border: 2px solid var(--accent); border-radius: 10px; box-shadow: 0 0 0 9999px rgba(2, 8, 20, .66); pointer-events: none; transition: all .2s; }
+.tour-tip { position: fixed; background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 1rem 1.1rem; box-shadow: var(--shadow); max-height: 80vh; overflow-y: auto; }
+.tour-tip h4 { font-size: 1rem; margin-bottom: .4em; }
+.tour-tip p { font-size: .88rem; color: var(--muted); }
+.tour-tip ul { margin: 0 0 .8em; padding-left: 1.1em; font-size: .86rem; }
+.tour-tip li { margin: .25em 0; }
+.tour-nav { display: flex; align-items: center; gap: .4rem; }
+.tour-nav .muted { margin-right: auto; font-size: .76rem; }
+.arch { width: 100%; height: auto; margin: .6rem 0; }
+.arch .ab rect { fill: var(--surface-2); stroke: var(--border); }
+.arch .ab.tab rect { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
+.arch .ab.prod rect { stroke-dasharray: 5 4; }
+.arch text { fill: var(--text); font: 600 12px var(--font); }
+.arch text.s { fill: var(--muted); font-weight: 400; font-size: 10.5px; }
+.arch text.cap { fill: var(--accent); font-size: 10px; letter-spacing: .1em; }
+.arch .ar { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.arch .ah { fill: var(--accent); }
+.how-list { padding-left: 1.1em; font-size: .88rem; }
+.how-list li { margin: .35em 0; }
+
+/* usability: comfortable hit targets for filter chips and inline links (22px before), larger on touch screens */
+.chip { min-height: 28px; padding: .25em .85em; }
+button.link { min-height: 28px; display: inline-flex; align-items: center; }
+@media (pointer: coarse) { .chip, button.link, .seg-b, .btn.small { min-height: 40px; } .demo-bar { height: 48px; } body.has-demo { padding-top: 48px; } body.has-demo #root.app { height: calc(100vh - 48px); } }
+@media (max-width: 700px) { .demo-clock, .demo-bar .how { display: none; } .demo-who { max-width: 150px; } .demo-bar { gap: .4rem; padding: 0 .5rem; } }

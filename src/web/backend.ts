@@ -23,12 +23,17 @@ export interface FeedStatus {
 }
 
 const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
+/** Static build (`vite build --mode static`): the server runs inside the page, see local.ts. */
+export const STATIC_MODE = (import.meta.env.VITE_STATIC as string | undefined) === 'true';
 
 export class Backend {
-  private constructor(private readonly base: string) {}
+  /** true when the API runs inside this page (static demo) */
+  readonly isLocal: boolean = false;
+  protected constructor(protected readonly base: string) {}
 
   /** Resolves to a backend when the server answers its health check, otherwise null. */
   static async connect(): Promise<Backend | null> {
+    if (STATIC_MODE) return (await import('./local')).LocalBackend.create();
     try {
       const res = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(6000) });
       const body = (await res.json()) as { status?: string };

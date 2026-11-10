@@ -14,7 +14,9 @@
     "deploy:worker": "wrangler deploy",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "live:setup": "node scripts/setup-live.mjs",
-    "live": "npm run build && wrangler dev --port 8787"
+    "live": "npm run build && wrangler dev --port 8787",
+    "dev:static": "vite --mode static",
+    "build:static": "tsc --noEmit -p tsconfig.json && vite build --mode static --outDir ../../dist-static"
   },
   "dependencies": {
     "hono": "^4.6.0",

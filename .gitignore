@@ -11,3 +11,5 @@ __pycache__/
 reports/*.tmp
 *.log
 .claude/
+dist-static/
+!.env.static
